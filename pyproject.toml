@@ -1,0 +1,8 @@
+[project]
+name = "coup-sandbox"
+version = "1.0.0"
+description = "Issa Compass intern hackathon: Coup agent sandbox"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
