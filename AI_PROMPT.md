@@ -6,7 +6,7 @@ Replace `YOUR-NAME` with the folder name you were given. Then let the tool edit 
 
 You are writing a Coup bot for a timed hackathon. Work only in this repository.
 
-Edit only `agents/submissions/YOUR-NAME/agent.py` (that folder is gitignored — do not commit it or open a PR). Create that file by copying `agents/template/agent.py` if it does not exist. Do not modify anything under `coup/`, `tests/`, `scripts/`, or `agents/examples/`. Submission is `python scripts/hub.py upload YOUR-NAME --full-name "…"` after the organizers’ `.env` is in the repo root.
+Edit only `agents/local/YOUR-NAME/agent.py` while iterating (gitignored). For the scored file, use `agents/submissions/YOUR-NAME/agent.py` (also gitignored — do not commit either or open a PR). Create the file by copying `agents/template/agent.py` if it does not exist. Do not modify anything under `coup/`, `tests/`, `scripts/`, or `agents/examples/`. When the organizers’ `.env` is in the repo root, submit with `python scripts/hub.py upload YOUR-NAME --full-name "…"` from the submissions copy.
 
 Read `RULES.md` and `API.md` before you write the policy. The engine in `coup/engine/` is the referee. Do not import it. Your file may import from `coup.agent_api` and the Python standard library. It must not import `socket`, `requests`, `urllib`, `http`, `subprocess`, `importlib`, `ctypes`, or `coup.engine`. It must not print.
 
@@ -35,7 +35,7 @@ A strong simple policy, which you should then improve:
 After each edit, run:
 
 ```powershell
-python scripts/test_agent.py agents/submissions/YOUR-NAME/agent.py
+python scripts/test_agent.py agents/local/YOUR-NAME/agent.py
 ```
 
 Repeat until the last line is `READY`. If it says `NOT READY`, fix illegal moves, exceptions, and timeouts. Do not weaken the checker. Win rate is printed for you. It does not have to be high for `READY`, but do not stop at a bot that only takes Income if you still have time. Compare against the bots in `agents/examples/` by reading them, not by importing the engine.
