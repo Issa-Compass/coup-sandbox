@@ -2,7 +2,7 @@
 
 For Kat, Alyza, Nay, and Andy. Candidates should not need this.
 
-The event is **Friday 6 November, 1pm, Cloud 11**. Share this private repo with staff before that. Invite candidates when the build window starts, so everyone learns the rules at the same time. Remote candidates are not in this room. They still do a 1:1 with Andy, and a later round with Aaron or Nay if that goes well.
+The event is **Friday 6 November, 1pm, Cloud 11**. This repo is the **public** hackathon sandbox. Candidate bots stay gitignored on their machines and are submitted through **coup-master** using a `.env` you hand out in person (URL + API key). Remote candidates are not in this room. They still do a 1:1 with Andy, and a later round with Aaron or Nay if that goes well.
 
 ## Before Friday
 
@@ -17,6 +17,15 @@ python scripts/play.py --seed 1
 ```
 
 `test_agent.py` must print `READY`. If a step is confusing, fix the docs in this repo. Do not explain it in Slack instead. The candidates will not have that Slack thread.
+
+Prepare one `.env` slip per candidate (same values for everyone is fine):
+
+```text
+COUP_MASTER_URL=https://coup-master-….run.app
+COUP_MASTER_API_KEY=…
+```
+
+Keep the API key off Slack, the public repo, and screenshots. `.env` and `.env.example` (placeholders only) stay out of chat.
 
 Then run a staff round:
 
@@ -37,14 +46,20 @@ Do that only after the dry run, on the commit you want them to clone. Do not mov
 
 ## During the event
 
-Each candidate clones the tagged repo, makes `agents/submissions/<name>/agent.py`, and opens a pull request from `agent/<name>`. GitHub runs `pytest` and then `scripts/test_agent.py` on every submission folder the pull request touches.
+Each candidate clones the tagged repo, builds `agents/submissions/<name>/agent.py` (gitignored), puts your `.env` in the repo root, gets `READY`, and uploads:
+
+```powershell
+python scripts/hub.py upload <name> --full-name "Ada Lovelace"
+```
 
 At each checkpoint (for example every hour, then a final):
 
 ```powershell
-python scripts/collect_submissions.py
+python scripts/collect_submissions.py --force
 python scripts/tournament.py --round 1 --submissions --games-per-agent 20 --run-id nov6 --seed 1
 ```
+
+`collect_submissions.py` downloads approved hub agents into `agents/submissions/` (also gitignored on the organizer machine). Use `--force` to refresh from the hub before a scored round.
 
 Use `--round 2`, `--round 3`, and so on for later checkpoints. Do not reuse a round number unless you pass `--force`, which deletes that round's files. Cumulative standings are written to `results/nov6/standings.html` from every `round_*` folder under that run id.
 
@@ -75,8 +90,8 @@ Copy the `results/nov6` folder to Drive at the end. It is gitignored on purpose.
 
 ## If something breaks
 
-- A pull request is red because `test_agent.py` is `NOT READY`. That agent can still be collected, and the tournament will play defaults for bad decisions and count them. You do not have to drop them unless the file does not import at all.
-- `collect_submissions.py` only copies `agents/submissions` from branches named `agent/<name>` on `origin`. A branch with another name is ignored. Run it from a clean checkout so it does not mix with local edits.
+- Hub upload fails static check or `NOT READY`: the candidate fixes locally and re-uploads. You can still collect whatever is already on the hub; the tournament will play defaults for bad decisions and count them. Drop them only if the file does not import at all.
+- `collect_submissions.py` needs `COUP_MASTER_URL` (from `.env`). It does not need the API key to download approved agents. Reject a bad name with `python scripts/hub.py reject <name>`.
 - The sandbox is one process per agent for the whole round. A timeout kills that process and starts it again on the next decision. One bad agent cannot hang the table.
 - Staff rehearsal uses `--no-sandbox`. The scored command does not. An agent that cheats by reading engine memory will pass a local `--no-sandbox` game and fail, or play randomly, in the real round.
 
@@ -85,6 +100,7 @@ Copy the `results/nov6` folder to Drive at the end. It is gitignored on purpose.
 ```powershell
 python scripts/play.py --agents template,random,honest --seed 3 --reveal
 python scripts/replay.py results/nov6/round_1/games/g0001.jsonl
+python scripts/collect_submissions.py --force
 python scripts/tournament.py --round 1 --agents honest,bluffer,challenger,random --games-per-agent 4 --no-sandbox --run-id demo --force
 python scripts/serve_dashboard.py --port 8765
 ```

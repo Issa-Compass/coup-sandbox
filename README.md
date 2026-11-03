@@ -46,13 +46,19 @@ cp agents/template/agent.py agents/submissions/your-name/agent.py
 python scripts/test_agent.py agents/submissions/your-name/agent.py
 ```
 
-Use lowercase letters, digits, and hyphens in `your-name`. That folder name is what the leaderboard shows. Edit only that `agent.py`. If you use Cursor or Claude, paste [`AI_PROMPT.md`](AI_PROMPT.md) and tell it your folder name.
+Use lowercase letters, digits, underscore, and hyphen in `your-name`. That folder name is what the hub and leaderboard show. Edit only that `agent.py`. The `agents/submissions/` folder is **gitignored** — do not commit your bot or open a PR with it.
 
-Push a branch named `agent/your-name` and open a pull request. The checker runs on that pull request.
+At the event, organizers hand you a `.env` (coup-master URL + API key). Copy it to the repo root (or fill [`.env.example`](.env.example)), get `READY`, then:
+
+```bash
+python scripts/hub.py upload your-name --full-name "Ada Lovelace"
+```
+
+If you use Cursor or Claude, paste [`AI_PROMPT.md`](AI_PROMPT.md) and tell it your folder name.
 
 ## Local agents — get started and see results
 
-Scratch bots for your machine and the dashboard **Local** list. Not scored submissions (those stay under `agents/submissions/`). Folders are auto-discovered; no catalog edit. More detail: [`agents/local/README.md`](agents/local/README.md).
+Scratch bots for your machine and the dashboard **Local** list. Also gitignored. Scored hand-in is still hub upload from `agents/submissions/`. Folders are auto-discovered; no catalog edit. More detail: [`agents/local/README.md`](agents/local/README.md).
 
 ### Checklist
 
@@ -117,19 +123,18 @@ Same folder name keeps the same id in `--agents` and the dashboard. New folder =
 
 ## Shared hub (coup-master)
 
-When the organizer’s **coup-master** URL is set, you can publish a unique name + local `agent.py`, and pull other people’s safe agents into `agents/local/`.
+Submission is hub upload, not a GitHub PR. Put the organizers’ `.env` in the repo root (`COUP_MASTER_URL` + `COUP_MASTER_API_KEY`). `scripts/hub.py` and the dashboard load it automatically.
 
 ```bash
-export COUP_MASTER_URL=https://coup-master.example.com
-export COUP_MASTER_API_KEY=…          # needed to upload
+# after READY on agents/submissions/your-name/agent.py
 python scripts/hub.py list
 python scripts/hub.py upload your-name --full-name "Ada Lovelace"
-python scripts/hub.py download other-bot
+python scripts/hub.py download other-bot   # into agents/local/
 ```
 
 Uploads that pass the static safety check are listed immediately. A real **full name** (at least two names; middle names OK) is required. Organizers can remove a bad submission with `python scripts/hub.py reject your-name`.
 
-Names: `A–Z a–z 0–9 _ -` only, and must not already exist on the hub. Master rejects unsafe imports the same way `test_agent.py` does (it never runs your code). The dashboard also exposes `/api/hub/*` when started with `COUP_MASTER_URL` or `--master-url`.
+Names: `A–Z a–z 0–9 _ -` only, and must not already exist on the hub. Master rejects unsafe imports the same way `test_agent.py` does (it never runs your code). The dashboard also exposes `/api/hub/*` when `.env` or `--master-url` is set.
 
 ## Read next
 
@@ -147,14 +152,15 @@ Names: `A–Z a–z 0–9 _ -` only, and must not already exist on the hub. Mast
 | `coup/engine/` | Rules and the hidden game state. Do not import this |
 | `agents/template/agent.py` | A legal agent with comments. Copy it |
 | `agents/examples/` | `random`, `honest`, `bluffer`, and `challenger` |
-| `agents/local/` | Scratch agents for local play (gitignored). Auto-listed from the directory |
+| `agents/local/` | Scratch agents (gitignored). Auto-listed from the directory |
+| `agents/submissions/` | Your scored agent (gitignored). Upload via hub |
+| `.env.example` | Template for the in-person coup-master `.env` |
 | `scripts/test_agent.py` | The "am I allowed to submit" check |
 | `scripts/hub.py` | Upload / list / download via coup-master |
+| `scripts/collect_submissions.py` | Organizer: pull hub agents onto disk for a round |
 | `scripts/play.py` | One game, printed |
 | `scripts/tournament.py` | A round and a leaderboard |
 | `scripts/replay.py` | Print a saved game |
 | `results/` | Round logs. Not committed |
 
 `python scripts/play.py --agents template,random,honest,bluffer --seed 1` is a good way to watch a strategy.
-
-Internal Issa Compass hiring exercise. Do not distribute this repo.

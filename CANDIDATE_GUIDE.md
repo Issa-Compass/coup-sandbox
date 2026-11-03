@@ -1,16 +1,22 @@
 # Candidate guide
 
-You have the same rules as everyone else, and you see them when the repo is shared. Build an agent that wins Coup. The code around the agent is already written.
+You have the same rules as everyone else. Build an agent that wins Coup. The code around the agent is already written. This repo is public; your `agent.py` stays on your machine until you upload it to the hub.
 
 ## What to hand in
 
-One file:
+One file on disk:
 
 ```text
 agents/submissions/<your-name>/agent.py
 ```
 
-Branch: `agent/<your-name>`. Open a pull request into this repo. `<your-name>` is the name on the scoreboard. Use letters, digits, and hyphens.
+That folder is **gitignored**. Do not open a pull request with your bot. At the event, organizers give you a `.env` (coup-master URL + API key). Submit with:
+
+```bash
+python scripts/hub.py upload <your-name> --full-name "Your Full Name"
+```
+
+`<your-name>` is the name on the scoreboard. Use letters, digits, underscore, and hyphen. A real full name (at least two names) is required.
 
 Do not edit the engine, the examples, or someone else's folder. Do not add dependencies. The standard library and `coup.agent_api` are enough.
 
@@ -21,7 +27,7 @@ Do not edit the engine, the examples, or someone else's folder. Do not add depen
 3. Read `RULES.md` once. Then keep `API.md` open.
 4. Run `python scripts/test_agent.py agents/submissions/<your-name>/agent.py` after each change. Stop when it says `READY`.
 5. Watch a game: `python scripts/play.py --agents your-name,honest,bluffer,challenger --seed 1`.
-6. Push the branch and open the pull request. The GitHub check runs the same tester on your file.
+6. When you have the event `.env`, upload with `scripts/hub.py` (see above). Re-upload replaces your hub entry.
 
 If you want Cursor or Claude to write the first version, paste `AI_PROMPT.md` and put your folder name in the blank.
 
@@ -69,6 +75,8 @@ In a tournament round you may optionally call `query_standings(StandingsScope.TA
 Do not print. Do not open `results/` files. Do not call an LLM from the agent. The model, if you use one, is for writing the code before the game.
 
 ## Getting unstuck
+
+`READY` means you can submit to the hub.
 
 `NOT READY` prints the reason.
 

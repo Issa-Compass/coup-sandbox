@@ -1,10 +1,10 @@
 """Talk to coup-master from a local sandbox.
 
-  export COUP_MASTER_URL=https://coup-master-….run.app
-  export COUP_MASTER_API_KEY=…   # required for upload / organizer commands
+Put the in-person `.env` (COUP_MASTER_URL + COUP_MASTER_API_KEY) in the repo
+root, or export those variables. Upload needs the API key.
 
   python scripts/hub.py list
-  python scripts/hub.py upload milo
+  python scripts/hub.py upload milo --full-name "Ada Lovelace"
   python scripts/hub.py download other-bot
 
   # Organizer:
@@ -28,6 +28,7 @@ from coup.hub_client import (  # noqa: E402
     download_queue_agent,
     list_queue,
     list_remote_agents,
+    load_repo_dotenv,
     reject_agent,
     upload_agent,
 )
@@ -35,6 +36,7 @@ from coup.runner.catalog import LOCAL, resolve_agent  # noqa: E402
 
 
 def main() -> None:
+    load_repo_dotenv()
     parser = argparse.ArgumentParser(description="Coup master hub client")
     parser.add_argument("--url", default=None, help="Override COUP_MASTER_URL")
     sub = parser.add_subparsers(dest="cmd", required=True)

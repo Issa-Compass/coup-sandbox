@@ -18,5 +18,3 @@ jobs:
         run: pip install -r requirements.txt
       - name: Engine and runner tests
         run: pytest
-      - name: Changed submissions
-        run: python scripts/ci_submissions.py

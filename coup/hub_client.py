@@ -31,6 +31,31 @@ RESERVED_NAMES = {
     "health",
 }
 DEFAULT_TIMEOUT = 30.0
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def load_repo_dotenv(path: Path | None = None) -> None:
+    """Load KEY=VALUE from the repo `.env` without overriding existing env vars."""
+
+    env_path = Path(path) if path is not None else REPO_ROOT / ".env"
+    if not env_path.is_file():
+        return
+    for raw in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export ") :].strip()
+        if "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        if not key or key in os.environ:
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+            value = value[1:-1]
+        os.environ[key] = value
 
 
 @dataclass(frozen=True)

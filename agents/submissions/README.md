@@ -1,11 +1,16 @@
 # Candidate agents
 
-Put your agent here, and nowhere else:
+Work here. Do **not** commit this folder — it is gitignored (only this README is tracked).
 
 ```text
 agents/submissions/<your-name>/agent.py
 ```
 
-`<your-name>` is lowercase letters, digits, and hyphens. It is the name on the leaderboard.
+`<your-name>` is letters, digits, underscore, and hyphen. That name is what the hub and scoreboard show.
 
-Start from `agents/template/agent.py`. One Agent subclass per file. Open a pull request from branch `agent/<your-name>`.
+1. Copy `agents/template/agent.py` into your folder.
+2. Get `READY` from `python scripts/test_agent.py agents/submissions/<your-name>/agent.py`.
+3. At the event, put the organizers’ `.env` in the repo root (URL + API key).
+4. Submit with `python scripts/hub.py upload <your-name> --full-name "Your Full Name"`.
+
+Scratch experiments can also live under `agents/local/` (also gitignored). Scored hand-in is hub upload from this folder.

@@ -6,7 +6,7 @@ Replace `YOUR-NAME` with the folder name you were given. Then let the tool edit 
 
 You are writing a Coup bot for a timed hackathon. Work only in this repository.
 
-Edit only `agents/submissions/YOUR-NAME/agent.py`. Create that file by copying `agents/template/agent.py` if it does not exist. Do not modify anything under `coup/`, `tests/`, `scripts/`, or `agents/examples/`.
+Edit only `agents/submissions/YOUR-NAME/agent.py` (that folder is gitignored — do not commit it or open a PR). Create that file by copying `agents/template/agent.py` if it does not exist. Do not modify anything under `coup/`, `tests/`, `scripts/`, or `agents/examples/`. Submission is `python scripts/hub.py upload YOUR-NAME --full-name "…"` after the organizers’ `.env` is in the repo root.
 
 Read `RULES.md` and `API.md` before you write the policy. The engine in `coup/engine/` is the referee. Do not import it. Your file may import from `coup.agent_api` and the Python standard library. It must not import `socket`, `requests`, `urllib`, `http`, `subprocess`, `importlib`, `ctypes`, or `coup.engine`. It must not print.
 

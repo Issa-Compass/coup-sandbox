@@ -2,9 +2,24 @@
 
 from __future__ import annotations
 
+import os
+
 import pytest
 
-from coup.hub_client import HubError, validate_full_name, validate_local_name
+from coup.hub_client import HubError, load_repo_dotenv, validate_full_name, validate_local_name
+
+
+def test_load_repo_dotenv_does_not_override(tmp_path, monkeypatch):
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "COUP_MASTER_URL=https://example.test\nCOUP_MASTER_API_KEY=from-file\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("COUP_MASTER_API_KEY", "already-set")
+    monkeypatch.delenv("COUP_MASTER_URL", raising=False)
+    load_repo_dotenv(env_file)
+    assert os.environ["COUP_MASTER_URL"] == "https://example.test"
+    assert os.environ["COUP_MASTER_API_KEY"] == "already-set"
 
 
 def test_name_charset():

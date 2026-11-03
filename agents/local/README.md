@@ -1,7 +1,8 @@
 # Local agents
 
 Scratch agents for local play and the dashboard. Not scored submissions.
-Candidate work still goes in `agents/submissions/`.
+Candidate work goes in `agents/submissions/` (also gitignored) and is submitted
+with `scripts/hub.py` after you receive the event `.env`.
 
 Agent folders under this directory are gitignored. The dashboard and
 `--agents <name>` discover whatever is on disk: each `*/agent.py` is one agent.
@@ -52,15 +53,17 @@ In the dashboard, open **Play Games** → **Local** → add the agent (or **Add 
 
 ## Shared hub
 
-Pull someone else’s safe submission into this folder (needs `COUP_MASTER_URL`):
+Put the organizers’ `.env` in the repo root first.
+
+Pull someone else’s safe submission into this folder:
 
 ```bash
 python scripts/hub.py download their-name
 # writes agents/local/their-name/agent.py
 ```
 
-Upload yours with a unique name (`A–Z a–z 0–9 _ -`):
+Scored upload is from `agents/submissions/<name>/` (needs the API key in `.env`):
 
 ```bash
-python scripts/hub.py upload your-name
+python scripts/hub.py upload your-name --full-name "Ada Lovelace"
 ```

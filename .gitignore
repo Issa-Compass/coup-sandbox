@@ -13,5 +13,9 @@ results/*
 agents/local/**
 !agents/local/README.md
 
+# Candidate agents — work locally, submit via hub (never commit)
+agents/submissions/**
+!agents/submissions/README.md
+
 # Editor / agent tooling
 .cursor/

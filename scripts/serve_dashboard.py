@@ -27,33 +27,11 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 
-def _load_repo_dotenv() -> None:
-    """Load KEY=VALUE from repo `.env` without overriding existing env vars."""
-
-    path = ROOT / ".env"
-    if not path.is_file():
-        return
-    for raw in path.read_text(encoding="utf-8").splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        if line.startswith("export "):
-            line = line[len("export ") :].strip()
-        if "=" not in line:
-            continue
-        key, _, value = line.partition("=")
-        key = key.strip()
-        if not key or key in os.environ:
-            continue
-        value = value.strip()
-        if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
-            value = value[1:-1]
-        os.environ[key] = value
-
 from coup.hub_client import (  # noqa: E402
     HubError,
     download_agent,
     list_remote_agents,
+    load_repo_dotenv,
     master_url,
     ping_hub,
     upload_agent,
@@ -709,7 +687,7 @@ def make_server(
 
 
 def main() -> None:
-    _load_repo_dotenv()
+    load_repo_dotenv()
     parser = argparse.ArgumentParser(description="Serve the Coup organizer dashboard.")
     parser.add_argument("--results", type=Path, default=ROOT / "results")
     parser.add_argument("--port", type=int, default=8765)
