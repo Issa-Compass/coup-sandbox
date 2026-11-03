@@ -9,7 +9,7 @@ from coup.runner.catalog import EXAMPLES, resolve_agent
 from coup.runner.load_agent import agent_name_from_path, load_agent_class
 from coup.runner.match import play_game
 from coup.runner.players import InProcessPlayer, SandboxPlayer, open_player
-from coup.runner.static_check import static_issues
+from coup.runner.static_check import validate_source
 
 BUCKETS = ("random", "honest", "bluffer", "challenger", "mixed")
 TABLE_SIZES = (3, 4, 5, 6)
@@ -51,11 +51,29 @@ class Report:
         lines.append("READY" if self.ready else "NOT READY")
         return "\n".join(lines)
 
+    def as_dict(self) -> dict:
+        return {
+            "path": str(self.path),
+            "ready": self.ready,
+            "issues": list(self.issues),
+            "illegal": self.illegal,
+            "errors": self.errors,
+            "timeouts": self.timeouts,
+            "decisions": self.decisions,
+            "decision_time": self.decision_time,
+            "games": sum(bucket.games for bucket in self.buckets),
+            "buckets": [
+                {"name": bucket.name, "games": bucket.games, "wins": bucket.wins}
+                for bucket in self.buckets
+            ],
+            "text": self.text(),
+        }
+
 
 def evaluate(path: Path, games: int = 200, timeout: float = 1.0, sandbox_games: int = 3) -> Report:
     report = Report(path=path, ready=False)
     source = path.read_text(encoding="utf-8")
-    report.issues.extend(static_issues(source))
+    report.issues.extend(validate_source(source))
     if report.issues:
         return report
     try:

@@ -13,6 +13,12 @@ const ACTION_CLAIM = {
   exchange: "ambassador",
 };
 
+const ACTION_BLOCK = {
+  foreign_aid: ["duke"],
+  assassinate: ["contessa"],
+  steal: ["captain", "ambassador"],
+};
+
 const ACTION_LABEL = {
   income: "Income",
   foreign_aid: "Foreign Aid",
@@ -127,14 +133,98 @@ const state = {
   agents: [],
   session: null,
   setupOpen: false,
-  setupMode: "round", // "tournament" = pick agents; "round" = play next games
+  setupMode: "round", // "tournament" | "round" | "manual"
   setupMenuOpen: false,
   setup: defaultSetup(),
   setupError: null,
   rulesOpen: false,
   rulesText: null,
   copyFlash: null,
+  submitOpen: false,
+  manual: null, // live human-vs-agents snapshot from /api/manual
+  manualBusy: false,
+  manualError: null,
+  manualSpeedMs: 1000,
+  manualPumpTimer: null,
+  manualExchangeKeep: [], // selected cards during exchange prompt
+  hub: null, // { configured, master_url } | null while loading
+  hubPing: null, // { status: checking|ready|offline, error?, version? } | null
+  submit: defaultSubmit(),
 };
+
+function defaultSubmit() {
+  return {
+    agent: null,
+    name: "",
+    fullName: "",
+    busy: null, // "test" | "submit" | null
+    report: null,
+    error: null,
+    success: null,
+  };
+}
+
+const FULL_NAME_RE = /^[A-Za-z][A-Za-z'-]*(?: [A-Za-z][A-Za-z'-]*)+$/;
+
+function normalizeFullName(value) {
+  return String(value || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .join(" ");
+}
+
+/** @returns {string|null} error message, or null when ok */
+function fullNameError(value) {
+  const text = normalizeFullName(value);
+  if (!text) return "Enter your first and last name (e.g. Ada Lovelace)";
+  if (text.length < 3 || text.length > 128) {
+    return "Use 3–128 characters for your full name";
+  }
+  const parts = text.split(" ");
+  if (parts.length < 2) {
+    if (!/^[A-Za-z][A-Za-z'-]*$/.test(parts[0])) {
+      return "Letters, spaces, apostrophes, and hyphens only";
+    }
+    return "Add your last name too (e.g. Ada Lovelace)";
+  }
+  if (!FULL_NAME_RE.test(text)) {
+    return "Letters, spaces, apostrophes, and hyphens only";
+  }
+  return null;
+}
+
+const RESERVED_COUP_AI_NAMES = new Set([
+  "template",
+  "random",
+  "honest",
+  "bluffer",
+  "challenger",
+  "master",
+  "sandbox",
+  "admin",
+  "api",
+  "health",
+]);
+
+/** @returns {string|null} error message, or null when ok */
+function coupAiNameError(value) {
+  const text = String(value || "").trim();
+  if (!text) return "Pick a name for your Coup AI";
+  if (text.length < 1 || text.length > 64) {
+    return "Coup AI name must be 1–64 characters";
+  }
+  if (!/^[A-Za-z0-9_-]+$/.test(text)) {
+    return "Letters, numbers, underscore, and hyphen only — no spaces";
+  }
+  if (/^[-_]|[-_]$/.test(text)) {
+    return "Don't start or end the Coup AI name with _ or -";
+  }
+  if (RESERVED_COUP_AI_NAMES.has(text.toLowerCase())) {
+    return `"${text}" is reserved — pick another Coup AI name`;
+  }
+  return null;
+}
 
 let playTimer = null;
 let liveTimer = null;
@@ -144,9 +234,35 @@ const app = document.getElementById("app");
 
 async function init() {
   window.addEventListener("hashchange", () => route());
-  await Promise.all([loadRuns(), loadAgents(), loadSession()]);
+  await Promise.all([loadRuns(), loadAgents(), loadSession(), loadHub()]);
   syncLivePolling();
   route();
+}
+
+async function loadHub() {
+  try {
+    state.hub = await fetchJson("/api/hub");
+  } catch {
+    state.hub = { configured: false, master_url: null };
+  }
+}
+
+async function pingHub() {
+  state.hubPing = { status: "checking", error: null, version: null };
+  try {
+    const data = await fetchJson("/api/hub/ping");
+    state.hubPing = {
+      status: data.status === "ready" ? "ready" : "offline",
+      error: data.error || null,
+      version: data.version || null,
+    };
+  } catch (err) {
+    state.hubPing = {
+      status: "offline",
+      error: err?.message || String(err),
+      version: null,
+    };
+  }
 }
 
 function sessionIsLive() {
@@ -219,6 +335,9 @@ async function refreshLive() {
 function parseHash() {
   const raw = location.hash.replace(/^#\/?/, "");
   const parts = raw.split("/").filter(Boolean);
+  if (parts[0] === "manual") {
+    return { view: "manual", runId: state.runId, round: state.round };
+  }
   if (parts[0] === "play" && parts.length >= 4) {
     return { view: "play", runId: parts[1], round: Number(parts[2]), gameId: parts[3] };
   }
@@ -237,6 +356,7 @@ function parseHash() {
 
 async function route() {
   stopPlaybackTimer();
+  stopManualPump();
   const next = parseHash();
   state.view = next.view;
   if (next.runId) state.runId = next.runId;
@@ -250,6 +370,8 @@ async function route() {
   } else if (next.view === "play") {
     state.round = next.round;
     await loadPlayback(next.gameId);
+  } else if (next.view === "manual") {
+    await loadManual({ quiet: true });
   }
   render();
 }
@@ -385,15 +507,29 @@ async function fetchJson(url, options) {
   const res = await fetch(url, { cache: "no-store", ...options });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || `${res.status} ${url}`);
+    const issues = Array.isArray(body.issues) && body.issues.length
+      ? `: ${body.issues.join("; ")}`
+      : "";
+    throw new Error(`${body.error || `${res.status} ${url}`}${issues}`);
   }
   return res.json();
 }
 
 function render() {
+  // Flush open form fields before wiping the DOM so remounts keep drafts.
+  readSetupFieldsFromDom();
+  const submitName = document.getElementById("submit-name");
+  if (submitName) state.submit.name = submitName.value;
+  const submitFullName = document.getElementById("submit-full-name");
+  if (submitFullName) state.submit.fullName = submitFullName.value;
   if (state.view === "play" && state.playback) {
     app.innerHTML = renderPlayback();
     bindPlayback();
+    return;
+  }
+  if (state.view === "manual") {
+    app.innerHTML = renderManualPlay();
+    bindManualPlay();
     return;
   }
   if (state.view === "games") {
@@ -452,13 +588,21 @@ function renderChrome(title, subtitle, extra = "") {
           <div class="field">
             <label for="toggle-setup">Play</label>
             <div class="play-group">
-              <button class="btn primary ${state.setupOpen && state.setupMode === "round" ? "active" : ""}" id="toggle-setup" type="button">Play Games</button>
+              <button class="btn primary ${state.setupOpen && state.setupMode === "tournament" ? "active" : ""}" id="toggle-setup" type="button">New Tournament</button>
               <div class="menu ${state.setupMenuOpen ? "open" : ""}">
-                <button class="btn icon-btn ${state.setupOpen && state.setupMode === "tournament" ? "active" : ""}" id="setup-menu-btn" type="button" aria-label="Tournament settings" aria-expanded="${state.setupMenuOpen ? "true" : "false"}" title="Settings">
+                <button class="btn icon-btn ${
+                  state.submitOpen ||
+                  (state.setupOpen && (state.setupMode === "round" || state.setupMode === "manual")) ||
+                  (state.view === "manual" && state.manual?.status === "waiting")
+                    ? "active"
+                    : ""
+                }" id="setup-menu-btn" type="button" aria-label="More play options" aria-expanded="${state.setupMenuOpen ? "true" : "false"}" title="Settings">
                   ${settingsIcon()}
                 </button>
                 <div class="menu-panel" role="menu">
-                  <button class="menu-item" type="button" id="new-tournament" role="menuitem">New tournament</button>
+                  <button class="menu-item" type="button" id="another-round" role="menuitem">Another round</button>
+                  <button class="menu-item ${state.setupOpen && state.setupMode === "manual" ? "active" : ""}" type="button" id="play-manually" role="menuitem">Play manually</button>
+                  <button class="menu-item ${state.submitOpen ? "active" : ""}" type="button" id="submit-agent" role="menuitem">Submit agent</button>
                 </div>
               </div>
             </div>
@@ -470,6 +614,7 @@ function renderChrome(title, subtitle, extra = "") {
       ${state.setupOpen ? renderSetup() : ""}
       ${title}
       ${state.rulesOpen ? renderRulesModal() : ""}
+      ${state.submitOpen ? renderSubmitModal() : ""}
     </div>
   `;
 }
@@ -531,6 +676,38 @@ function crownIcon() {
   return `<svg class="icon crown-icon" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
     <path d="M3 19h18"></path>
     <path d="M5 19V10l3.5 2.5L12 6l3.5 6.5L19 10v9"></path>
+  </svg>`;
+}
+
+function refreshIcon() {
+  return `<svg class="icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M21 12a9 9 0 1 1-2.6-6.3"></path>
+    <path d="M21 3v6h-6"></path>
+  </svg>`;
+}
+
+function baseSetIcon() {
+  return `<svg class="icon catalog-section-icon" viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 2 2 7l10 5 10-5-10-5z"></path>
+    <path d="M2 12l10 5 10-5"></path>
+    <path d="M2 17l10 5 10-5"></path>
+  </svg>`;
+}
+
+function localAgentsIcon() {
+  return `<svg class="icon catalog-section-icon" viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
+  </svg>`;
+}
+
+function arenaIcon() {
+  return `<svg class="icon catalog-section-icon" viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M14.5 17.5 3 6V3h3l11.5 11.5"></path>
+    <path d="M13 19l6-6"></path>
+    <path d="M16 16l4 4"></path>
+    <path d="M9.5 6.5 21 18v3h-3L6.5 9.5"></path>
+    <path d="M11 5l-6 6"></path>
+    <path d="M8 8 4 4"></path>
   </svg>`;
 }
 
@@ -610,10 +787,19 @@ function agentById(id) {
   return availableAgents().find((agent) => agent.id === id) || { id, kind: "example" };
 }
 
+function agentDisplayName(agent) {
+  return (agent && agent.name) || (agent && agent.id) || "";
+}
+
 function agentKindLabel(agent) {
   if (agent.kind === "local") return "local";
-  if (agent.kind === "submission") return "submitted";
-  return "base";
+  if (agent.kind === "submission") return "arena";
+  return "";
+}
+
+function agentKindHtml(agent) {
+  const kindLabel = agentKindLabel(agent);
+  return kindLabel ? `<span class="agent-kind">${escapeHtml(kindLabel)}</span>` : "";
 }
 
 function agentSeatClass(agent) {
@@ -627,12 +813,12 @@ function isStandardAgent(agent) {
 }
 
 function renderAgentPickerChip(agent, selected) {
+  const label = agentDisplayName(agent);
   const count = selected.filter((id) => id === agent.id).length;
-  const kindLabel = agentKindLabel(agent);
   const title =
     count > 0
-      ? `Add another ${agent.id} (${count} in roster)`
-      : `Add ${agent.id}`;
+      ? `Add another ${label} (${count} in roster)`
+      : `Add ${label}`;
   return `
     <button
       class="agent-pick"
@@ -641,8 +827,8 @@ function renderAgentPickerChip(agent, selected) {
       title="${escapeAttr(title)}"
     >
       <span class="agent-pick-plus" aria-hidden="true">+</span>
-      <span class="agent-id">${escapeHtml(agent.id)}</span>
-      <span class="agent-kind">${escapeHtml(kindLabel)}</span>
+      <span class="agent-id">${escapeHtml(label)}</span>
+      ${agentKindHtml(agent)}
     </button>`;
 }
 
@@ -657,14 +843,14 @@ function renderSetupRoster(editable) {
   return `<div class="agent-roster ${editable ? "" : "locked"}">${selected
     .map((id, index) => {
       const agent = agentById(id);
-      const kindLabel = agentKindLabel(agent);
+      const label = agentDisplayName(agent) || id;
       const remove = editable
-        ? `<button class="agent-remove" type="button" data-remove-index="${index}" aria-label="Remove ${escapeAttr(id)}">×</button>`
+        ? `<button class="agent-remove" type="button" data-remove-index="${index}" aria-label="Remove ${escapeAttr(label)}">×</button>`
         : "";
       return `
         <div class="agent-seat ${agentSeatClass(agent)}">
-          <span class="agent-id">${escapeHtml(id)}</span>
-          <span class="agent-kind">${escapeHtml(kindLabel)}</span>
+          <span class="agent-id">${escapeHtml(label)}</span>
+          ${agentKindHtml(agent)}
           ${remove}
         </div>`;
     })
@@ -681,27 +867,33 @@ function renderAgentCatalog() {
   const localPicks = local.length
     ? local.map((agent) => renderAgentPickerChip(agent, selected)).join("")
     : `<div class="muted agent-catalog-empty">No agents in agents/local yet.</div>`;
+  const submittedEmpty = state.hub?.configured
+    ? "No approved agents on coup-master yet."
+    : "No submissions in agents/submissions yet.";
   const submittedPicks = submitted.length
     ? submitted.map((agent) => renderAgentPickerChip(agent, selected)).join("")
-    : `<div class="muted agent-catalog-empty">No submissions in agents/submissions yet.</div>`;
+    : `<div class="muted agent-catalog-empty">${submittedEmpty}</div>`;
   return `
     <div class="agent-catalog">
       <div class="agent-catalog-group">
         <div class="agent-catalog-label">
-          <span>Base set</span>
+          <span class="agent-catalog-title">${baseSetIcon()}Base set</span>
           <button class="btn ghost tiny" type="button" id="add-all-standard">Add all</button>
         </div>
         <div class="agent-grid">${standardPicks}</div>
       </div>
       <div class="agent-catalog-group">
         <div class="agent-catalog-label">
-          <span>Local</span>
+          <span class="agent-catalog-title">${localAgentsIcon()}Your local agents</span>
           <button class="btn ghost tiny" type="button" id="add-all-local" ${local.length ? "" : "disabled"}>Add all</button>
         </div>
         <div class="agent-grid">${localPicks}</div>
       </div>
       <div class="agent-catalog-group">
-        <div class="agent-catalog-label"><span>Submitted</span></div>
+        <div class="agent-catalog-label">
+          <span class="agent-catalog-title">${arenaIcon()}The Arena</span>
+          <button class="btn ghost tiny" type="button" id="add-all-submitted" ${submitted.length ? "" : "disabled"}>Add all</button>
+        </div>
         <div class="agent-grid">${submittedPicks}</div>
       </div>
     </div>`;
@@ -758,21 +950,34 @@ function renderSeatingBlock() {
 function renderSetup() {
   const s = state.setup;
   const picking = state.setupMode === "tournament";
+  const manual = state.setupMode === "manual";
   const count = s.agents.length;
   const seedValue = s.seed == null || s.seed === "" ? "" : s.seed;
-  const title = picking ? "New Tournament" : "Play Games";
+  const title = picking ? "New Tournament" : manual ? "Play Manually" : "Play Games";
   const blurb = picking
     ? "Pick the field for this tournament. Large fields split into equal-play tables of 2–6."
-    : "Same agents, next round. Set games, hit Run.";
+    : manual
+      ? "You sit as You against 1–5 agents. One live game — pick moves yourself."
+      : "Same agents, next round. Set games, hit Run.";
+  const agentCountLabel = manual
+    ? `${count} opponent${count === 1 ? "" : "s"}<span class="muted"> · need 1–5</span>`
+    : `${count} selected${picking ? `<span class="muted"> · need 2+</span>` : ""}`;
   const agentSection = `
     <div class="agent-setup">
       <div class="agent-setup-head">
-        <div class="setup-label">${picking ? "Agents" : "Field"}</div>
-        <div class="agent-count">${count} selected${picking ? `<span class="muted"> · need 2+</span>` : ""}</div>
+        <div class="setup-label">${picking ? "Agents" : manual ? "Opponents" : "Field"}</div>
+        <div class="agent-count">${agentCountLabel}</div>
       </div>
-      ${renderSetupRoster(picking)}
-      ${picking ? renderAgentCatalog() : ""}
+      ${manual ? renderManualRoster() : renderSetupRoster(picking)}
+      ${picking || manual ? renderAgentCatalog() : ""}
     </div>`;
+
+  const gamesField = manual
+    ? ""
+    : `<div class="field">
+          <label for="setup-games">Games / agent</label>
+          <input id="setup-games" type="number" min="1" value="${s.games}">
+        </div>`;
 
   return `
     <section class="panel setup-panel">
@@ -782,7 +987,7 @@ function renderSetup() {
       </div>
       <div class="setup-body">
         ${agentSection}
-        ${renderSeatingBlock()}
+        ${manual ? "" : renderSeatingBlock()}
         <div class="setup-grid setup-grid-simple">
           <div class="field">
             <label for="setup-seed">Seed <span class="muted">(blank = random)</span></label>
@@ -792,19 +997,41 @@ function renderSetup() {
             <label for="setup-timeout">Timeout (s)</label>
             <input id="setup-timeout" type="number" min="0.1" step="0.1" value="${s.timeout}">
           </div>
-          <div class="field">
-            <label for="setup-games">Games / agent</label>
-            <input id="setup-games" type="number" min="1" value="${s.games}">
-          </div>
+          ${gamesField}
         </div>
         ${state.setupError ? `<div class="session-error">${escapeHtml(state.setupError)}</div>` : ""}
         <div class="controls">
-          <button class="btn primary" type="button" id="start-session" ${sessionIsLive() ? "disabled" : ""}>Run</button>
+          <button class="btn primary" type="button" id="start-session" ${
+            !manual && sessionIsLive() ? "disabled" : ""
+          }>${manual ? "Play" : "Run"}</button>
           <button class="btn" type="button" id="close-setup">Close</button>
         </div>
       </div>
     </section>
   `;
+}
+
+function renderManualRoster() {
+  const selected = state.setup.agents;
+  const you = `
+    <div class="agent-seat human-seat">
+      <span class="agent-id">You</span>
+      <span class="agent-kind human">Human</span>
+    </div>`;
+  const opponents = selected.length
+    ? selected
+        .map((id, index) => {
+          const agent = agentById(id);
+          return `
+            <div class="agent-seat ${agentSeatClass(agent)}">
+              <span class="agent-id">${escapeHtml(id)}</span>
+              ${agentKindHtml(agent)}
+              <button class="agent-remove" type="button" data-remove-index="${index}" aria-label="Remove ${escapeAttr(id)}">×</button>
+            </div>`;
+        })
+        .join("")
+    : `<div class="agent-roster-empty muted">Add 1–5 agent opponents from the catalog.</div>`;
+  return `<div class="agent-roster">${you}${opponents}</div>`;
 }
 
 function renderScoreboard() {
@@ -819,7 +1046,7 @@ function renderScoreboard() {
     return renderChrome(
       `<section class="panel">
         <div class="panel-head"><h2>Latest Standings</h2></div>
-        <div class="empty">No tournament results yet. New tournament from settings to pick agents, then Play Games.</div>
+        <div class="empty">No tournament results yet. New Tournament to pick agents, then Another round to play.</div>
       </section>`,
       "Organizer scoreboard"
     );
@@ -830,7 +1057,7 @@ function renderScoreboard() {
     : `<div class="empty">${
         rounds.length
           ? "Standings appear after a round finishes."
-          : "No rounds yet. Play Games to run the next round."
+          : "No rounds yet. Another round from settings to play more games."
       }</div>`;
 
   const standingsPanel = `
@@ -1082,6 +1309,411 @@ function renderPlayback() {
       </div>
     </div>
   `;
+}
+
+function renderManualPlay() {
+  const m = state.manual;
+  if (!m || m.status === "idle") {
+    return renderChrome(
+      `<section class="panel">
+        <div class="panel-head"><h2>Play Manually</h2></div>
+        <div class="empty">Pick opponents from Settings → Play manually, then hit Play.</div>
+      </section>`,
+      "You vs agents"
+    );
+  }
+
+  const players = m.board?.players || [];
+  const n = players.length || 2;
+  const lastEvent = m.history?.length ? m.history[m.history.length - 1] : null;
+  const roles = actionRoles(lastEvent, m.board);
+  const actionTone = actionToneClass(lastEvent);
+  const humanSeat = m.human_seat ?? 0;
+  const claimsBySeat = claimsThrough(
+    (m.history || []).map((item) => ({ ...item, type: "event" })),
+    (m.history || []).length - 1
+  );
+
+  const seats = players
+    .map((player, i) => {
+      const pos = seatPosition(i, n);
+      const out = (player.influence || 0) === 0;
+      const isTurn = roles.turn === player.seat;
+      const isActor = roles.actor === player.seat;
+      const isTarget = roles.target === player.seat;
+      const isChallenger = roles.challenger === player.seat;
+      const isYou = player.seat === humanSeat;
+      const role =
+        (isActor && "actor") ||
+        (isTarget && "target") ||
+        (isChallenger && "challenger") ||
+        "";
+      const tags = [];
+      if (isYou) tags.push(`<span class="seat-badge you">You</span>`);
+      if (isActor) tags.push(`<span class="seat-badge">Act</span>`);
+      if (isTarget) tags.push(`<span class="seat-badge target">Target</span>`);
+      if (isChallenger) tags.push(`<span class="seat-badge challenger">Challenge</span>`);
+      if (isTurn) tags.push(`<span class="seat-turn" title="This player's turn">Turn</span>`);
+      const claims = claimsBySeat.get(player.seat) || [];
+      return `
+        <div class="seat ${out ? "out" : ""} ${role} ${isTurn ? "turn" : ""} ${isYou ? "you" : ""}" style="left:${pos.x}%;top:${pos.y}%" data-seat="${player.seat}">
+          <div class="seat-card">
+            ${tags.length ? `<div class="seat-tags">${tags.join("")}</div>` : ""}
+            <div class="seat-name">${escapeHtml(player.name)}</div>
+            <div class="seat-meta">
+              <span class="coins">${player.coins ?? "?"}¢</span>
+              <span>${player.influence ?? "?"} inf</span>
+            </div>
+            ${renderCards(player, isYou)}
+            ${renderClaims(claims)}
+          </div>
+        </div>`;
+    })
+    .join("");
+
+  const winner =
+    m.status === "finished" && m.result
+      ? renderGameWinner(m.result.winner_name)
+      : "";
+  const promptPanel = renderManualPrompt(m);
+  const backHref = state.runId
+    ? `#/run/${encodeURIComponent(state.runId)}/standings`
+    : "#/";
+
+  return `
+    <div class="shell play-shell">
+      <header class="play-topbar">
+        <a class="back-link" href="${backHref}">← Scoreboard</a>
+        <div class="play-title">
+          <div class="play-title-row">
+            <h1>You vs agents</h1>
+            ${winner}
+          </div>
+          ${renderPlayerRoster(players, { turnSeat: roles.turn })}
+        </div>
+        <div class="play-progress muted">seed ${m.seed ?? "—"}</div>
+      </header>
+      <div class="playback manual-playback">
+        <div class="table-stage ${actionTone}">
+          <div class="action-hud">${
+            m.status === "finished"
+              ? escapeHtml(m.message || "Game over")
+              : m.status === "thinking"
+                ? `<div class="eyebrow">Agents</div><div class="headline">${escapeHtml(m.message || "Thinking…")}</div>`
+                : actionHud(lastEvent, players, roles) || escapeHtml(m.message || "")
+          }</div>
+          <div class="table-arena">
+            ${actionArcs(roles, n)}
+            <div class="table-ring" aria-hidden="true"></div>
+            ${seats}
+          </div>
+        </div>
+        <aside class="side-rail">
+          <div class="manual-controls panel">
+            <div class="panel-head">
+              <h3>${escapeHtml(m.message || "Your move")}</h3>
+              <label class="meta-chip manual-speed" for="manual-speed">
+                <span class="meta-label">Speed</span>
+                <select id="manual-speed">
+                  ${SPEEDS.map(
+                    (item) =>
+                      `<option value="${item.ms}" ${item.ms === state.manualSpeedMs ? "selected" : ""}>${item.label}/move</option>`
+                  ).join("")}
+                </select>
+              </label>
+            </div>
+            ${state.manualError ? `<div class="session-error">${escapeHtml(state.manualError)}</div>` : ""}
+            ${promptPanel}
+            <div class="controls manual-actions">
+              <button class="btn" type="button" id="manual-leave">${
+                m.status === "finished" ? "Close" : "Leave game"
+              }</button>
+              ${
+                m.status === "finished"
+                  ? `<button class="btn primary" type="button" id="manual-again">Play again</button>`
+                  : ""
+              }
+            </div>
+          </div>
+          <div class="event-rail">
+            <h3>Event log</h3>
+            <div class="event-list" id="event-list">
+              ${(m.history || [])
+                .map((item, index, arr) => {
+                  const kind = escapeAttr(item.event || "event");
+                  const current = index === arr.length - 1;
+                  return `
+                <div class="event-item ${current ? "current" : ""}">
+                  <span class="turn">T${item.turn ?? "—"}</span>
+                  <span class="event-kind kind-${kind}">${escapeHtml(item.event || "event")}</span>
+                  <span class="event-msg">${formatEventMessage(item)}</span>
+                </div>`;
+                })
+                .join("")}
+            </div>
+          </div>
+        </aside>
+      </div>
+    </div>
+  `;
+}
+
+function renderManualPrompt(m) {
+  if (m.status === "finished") {
+    const rows = (m.result?.placements || [])
+      .map(
+        (row) =>
+          `<div class="manual-place">${row.place}. ${escapeHtml(row.name)} · ${row.points} pts · ${row.influence} inf · ${row.coins}¢</div>`
+      )
+      .join("");
+    return `<div class="manual-prompt">${rows || `<p class="muted">${escapeHtml(m.message || "Finished")}</p>`}</div>`;
+  }
+  if (m.status === "thinking") {
+    const name = m.prompt?.name || "Agent";
+    return `<div class="manual-prompt"><p class="muted">${escapeHtml(name)} is taking a turn…</p></div>`;
+  }
+  if (m.status !== "waiting" || !m.prompt || !m.view) {
+    return `<div class="manual-prompt"><p class="muted">Waiting…</p></div>`;
+  }
+  const kind = m.prompt.kind;
+  const busy = state.manualBusy ? "disabled" : "";
+  if (kind === "choose_action") {
+    const buttons = (m.view.legal_actions || [])
+      .map((action) => {
+        const label = actionLabel(action, m.board?.players || []);
+        return `<button class="btn ${action.type === "coup" || action.type === "assassinate" ? "primary" : ""}" type="button" data-manual-action="${escapeAttr(
+          action.type
+        )}" data-manual-target="${action.target == null ? "" : action.target}" ${busy}>${escapeHtml(label)}</button>`;
+      })
+      .join("");
+    return `<div class="manual-prompt"><div class="manual-choice-grid">${buttons}</div></div>`;
+  }
+  if (kind === "respond_to_action" || kind === "respond_to_block") {
+    const phase = m.view.phase || m.prompt?.phase;
+    const actionType = m.view.action?.type;
+    const blockers = ACTION_BLOCK[actionType] || [];
+    const isTarget = m.view.action?.target === m.view.you;
+    let hint = "";
+    if (phase === "challenge" && blockers.length) {
+      const names = blockers.map((card) => CARD_SHORT[card] || card).join(" / ");
+      const who =
+        actionType === "foreign_aid"
+          ? "Anyone can block after challenges"
+          : isTarget
+            ? `You can block with ${names} after challenges`
+            : `The target can block with ${names} after challenges`;
+      hint = `<p class="muted manual-phase-hint">${escapeHtml(who)}. Pass here first if you are not challenging.</p>`;
+    } else if (phase === "block" && blockers.length) {
+      const names = blockers.map((card) => CARD_SHORT[card] || card).join(" / ");
+      hint = `<p class="muted manual-phase-hint">Claim ${escapeHtml(names)} to block (truthful or bluff).</p>`;
+    }
+    const buttons = (m.view.legal_responses || [])
+      .map((response) => {
+        if (response.type === "pass") {
+          return `<button class="btn" type="button" data-manual-response="pass" ${busy}>Pass</button>`;
+        }
+        if (response.type === "challenge") {
+          return `<button class="btn primary" type="button" data-manual-response="challenge" ${busy}>Challenge</button>`;
+        }
+        if (response.type === "block") {
+          return `<button class="btn" type="button" data-manual-response="block" data-manual-card="${escapeAttr(
+            response.card
+          )}" ${busy}>Block (${escapeHtml(CARD_SHORT[response.card] || response.card)})</button>`;
+        }
+        return "";
+      })
+      .join("");
+    return `<div class="manual-prompt">${hint}<div class="manual-choice-grid">${buttons}</div></div>`;
+  }
+  if (kind === "choose_card_to_lose") {
+    const buttons = (m.view.your_cards || [])
+      .map(
+        (card) =>
+          `<button class="btn primary" type="button" data-manual-lose="${escapeAttr(card)}" ${busy}>Lose ${escapeHtml(
+            CARD_SHORT[card] || card
+          )}</button>`
+      )
+      .join("");
+    return `<div class="manual-prompt"><div class="manual-choice-grid">${buttons}</div></div>`;
+  }
+  if (kind === "choose_exchange") {
+    const pool = [...(m.view.your_cards || []), ...(m.view.drawn || [])];
+    const need = (m.view.your_cards || []).length;
+    const selected = new Set(state.manualExchangeKeep);
+    const chips = pool
+      .map((card, index) => {
+        const key = `${card}:${index}`;
+        const on = state.manualExchangeKeep.includes(key);
+        return `<button class="card-chip held ${escapeAttr(card)} ${on ? "picked" : ""}" type="button" data-exchange-toggle="${escapeAttr(
+          key
+        )}" ${busy}>${shortLabel(card)}</button>`;
+      })
+      .join("");
+    const canConfirm = state.manualExchangeKeep.length === need;
+    return `
+      <div class="manual-prompt">
+        <p class="muted">Pick ${need} card${need === 1 ? "" : "s"} to keep (${selected.size}/${need}).</p>
+        <div class="manual-exchange-pool">${chips}</div>
+        <button class="btn primary" type="button" id="manual-exchange-confirm" ${
+          canConfirm && !state.manualBusy ? "" : "disabled"
+        }>Keep selected</button>
+      </div>`;
+  }
+  return `<div class="manual-prompt"><p class="muted">Unknown prompt</p></div>`;
+}
+
+function actionLabel(action, players) {
+  const base = ACTION_LABEL[action.type] || action.type;
+  if (action.target == null) return base;
+  const name = players.find((p) => p.seat === action.target)?.name || `seat ${action.target}`;
+  return `${base} → ${name}`;
+}
+
+function bindManualPlay() {
+  bindChrome();
+  document.getElementById("manual-speed")?.addEventListener("change", (event) => {
+    state.manualSpeedMs = Number(event.target.value) || 1000;
+  });
+  document.getElementById("manual-leave")?.addEventListener("click", () => leaveManualGame());
+  document.getElementById("manual-again")?.addEventListener("click", () => leaveManualGame({ reopenSetup: true }));
+  document.querySelectorAll("[data-manual-action]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const type = btn.getAttribute("data-manual-action");
+      const rawTarget = btn.getAttribute("data-manual-target");
+      const decision = { type };
+      if (rawTarget !== "" && rawTarget != null) decision.target = Number(rawTarget);
+      submitManualMove(decision);
+    });
+  });
+  document.querySelectorAll("[data-manual-response]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const type = btn.getAttribute("data-manual-response");
+      const decision = { type };
+      if (type === "block") decision.card = btn.getAttribute("data-manual-card");
+      submitManualMove(decision);
+    });
+  });
+  document.querySelectorAll("[data-manual-lose]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      submitManualMove({ card: btn.getAttribute("data-manual-lose") });
+    });
+  });
+  document.querySelectorAll("[data-exchange-toggle]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const key = btn.getAttribute("data-exchange-toggle");
+      if (!key) return;
+      const need = (state.manual?.view?.your_cards || []).length;
+      let next = [...state.manualExchangeKeep];
+      if (next.includes(key)) next = next.filter((item) => item !== key);
+      else if (next.length < need) next.push(key);
+      state.manualExchangeKeep = next;
+      render();
+    });
+  });
+  document.getElementById("manual-exchange-confirm")?.addEventListener("click", () => {
+    const keep = state.manualExchangeKeep.map((key) => key.split(":")[0]);
+    submitManualMove({ keep });
+  });
+  const list = document.getElementById("event-list");
+  if (list) list.scrollTop = list.scrollHeight;
+  if (state.manual?.status === "thinking" && state.manualPumpTimer == null && !state.manualBusy) {
+    scheduleManualPump();
+  }
+}
+
+function stopManualPump() {
+  if (state.manualPumpTimer != null) {
+    clearTimeout(state.manualPumpTimer);
+    state.manualPumpTimer = null;
+  }
+}
+
+function scheduleManualPump() {
+  stopManualPump();
+  if (state.view !== "manual" || state.manual?.status !== "thinking") return;
+  const delay = Math.max(100, Number(state.manualSpeedMs) || 1000);
+  state.manualPumpTimer = setTimeout(() => {
+    state.manualPumpTimer = null;
+    stepManualAgent();
+  }, delay);
+}
+
+async function stepManualAgent() {
+  if (state.view !== "manual") return;
+  if (state.manual?.status !== "thinking") return;
+  if (state.manualBusy) return;
+  state.manualBusy = true;
+  state.manualError = null;
+  try {
+    state.manual = await fetchJson("/api/manual/step", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+  } catch (err) {
+    state.manualError = err.message || String(err);
+  } finally {
+    state.manualBusy = false;
+    render();
+    if (state.manual?.status === "thinking") scheduleManualPump();
+  }
+}
+
+async function submitManualMove(decision) {
+  if (state.manualBusy || state.manual?.status === "thinking") return;
+  stopManualPump();
+  state.manualBusy = true;
+  state.manualError = null;
+  render();
+  try {
+    state.manual = await fetchJson("/api/manual/move", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(decision),
+    });
+    state.manualExchangeKeep = [];
+  } catch (err) {
+    state.manualError = err.message || String(err);
+  } finally {
+    state.manualBusy = false;
+    render();
+    if (state.manual?.status === "thinking") scheduleManualPump();
+  }
+}
+
+async function leaveManualGame({ reopenSetup = false } = {}) {
+  stopManualPump();
+  try {
+    await fetchJson("/api/manual/stop", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+  } catch (err) {
+    console.error(err);
+  }
+  state.manual = null;
+  state.manualError = null;
+  state.manualExchangeKeep = [];
+  if (reopenSetup) {
+    state.setupMode = "manual";
+    state.setupOpen = true;
+    state.setupError = null;
+    state.submitOpen = false;
+    if (state.setup.agents.length > 5) state.setup.agents = state.setup.agents.slice(0, 5);
+  }
+  const target = state.runId ? `#/run/${encodeURIComponent(state.runId)}/standings` : "#/";
+  if (location.hash === "#/manual" || state.view === "manual") {
+    if (location.hash === target) {
+      state.view = "scoreboard";
+      await loadScoreboard({ quiet: true });
+      render();
+    } else {
+      location.hash = target;
+    }
+  } else {
+    render();
+  }
 }
 
 function renderCards(player, reveal) {
@@ -1368,21 +2000,23 @@ function bindChrome() {
   document.getElementById("setup-menu-btn")?.addEventListener("click", (event) => {
     event.stopPropagation();
     state.setupMenuOpen = !state.setupMenuOpen;
+    if (!state.setupMenuOpen) unbindMenuCloser();
     render();
   });
-  document.getElementById("new-tournament")?.addEventListener("click", () => {
-    startNewTournament();
+  document.getElementById("another-round")?.addEventListener("click", () => {
+    closeSetupMenu();
+    openRoundSetup().then(() => render());
   });
-  if (state.setupMenuOpen) {
-    const closer = (event) => {
-      const menu = document.querySelector(".menu");
-      if (menu && menu.contains(event.target)) return;
-      state.setupMenuOpen = false;
-      document.removeEventListener("click", closer);
-      render();
-    };
-    setTimeout(() => document.addEventListener("click", closer), 0);
-  }
+  document.getElementById("play-manually")?.addEventListener("click", () => {
+    closeSetupMenu();
+    openManualSetup().then(() => render());
+  });
+  document.getElementById("submit-agent")?.addEventListener("click", () => {
+    closeSetupMenu();
+    openSubmitModal();
+  });
+  bindSubmitModal();
+  bindMenuCloser();
   document.getElementById("open-rules")?.addEventListener("click", () => openRules());
   document.getElementById("close-rules")?.addEventListener("click", () => closeRules());
   document.getElementById("rules-backdrop")?.addEventListener("click", (event) => {
@@ -1437,6 +2071,397 @@ function closeRules() {
     rulesKeyHandler = null;
   }
   render();
+}
+
+function localAgents() {
+  return availableAgents().filter((agent) => agent.kind === "local");
+}
+
+function renderHubStatus() {
+  const ping = state.hubPing;
+  const status = ping?.status || "checking";
+  let badge = "CHECKING";
+  let badgeClass = "checking";
+  let title = "Pinging hub…";
+  if (status === "ready") {
+    badge = "READY";
+    badgeClass = "ready";
+    title = ping.version ? `Hub v${ping.version}` : "Hub ready";
+  } else if (status === "offline") {
+    badge = "OFFLINE";
+    badgeClass = "not-ready";
+    title = ping?.error || "Hub unreachable";
+  }
+  return `
+    <div class="submit-hub" title="${escapeAttr(title)}">
+      <span class="muted">Hub</span>
+      <span class="submit-badge ${badgeClass}">${badge}</span>
+      <button type="button" class="btn icon-btn hub-ping-btn" id="ping-hub"
+        title="Check hub" aria-label="Check hub"
+        ${status === "checking" ? "disabled" : ""}>${refreshIcon()}</button>
+    </div>`;
+}
+
+function renderSubmitModal() {
+  const local = localAgents();
+  const s = state.submit;
+  const selected = s.agent;
+  const hubReady = state.hubPing?.status === "ready";
+  const report = s.report;
+  const picks = local.length
+    ? local
+        .map((agent) => {
+          const active = agent.id === selected ? "active" : "";
+          const label = agentDisplayName(agent);
+          return `<button class="agent-pick submit-pick ${active}" type="button" data-submit-agent="${escapeAttr(
+            agent.id
+          )}">
+            <span class="agent-id">${escapeHtml(label)}</span>
+            <span class="agent-kind">local</span>
+          </button>`;
+        })
+        .join("")
+    : `<div class="muted agent-catalog-empty">No agents in agents/local yet. Copy the template into agents/local/&lt;name&gt;/agent.py first.</div>`;
+
+  const busy = Boolean(s.busy);
+  const fullNameIssue = fullNameError(s.fullName);
+  const fullNameOk = !fullNameIssue;
+  const nameTrimmed = (s.name || "").trim();
+  const coupAiIssue = coupAiNameError(s.name);
+  const coupAiOk = !coupAiIssue;
+  const showCoupAiError = Boolean(nameTrimmed) && Boolean(coupAiIssue);
+  const canAct = Boolean(selected) && coupAiOk && !busy;
+  const localReady =
+    Boolean(report) &&
+    report.ready === true &&
+    report.name_ok !== false &&
+    report.safe !== false;
+  const canSubmit = canAct && hubReady && localReady && fullNameOk;
+  const submitTitle = !hubReady
+    ? "Hub is offline — check hub status first"
+    : !fullNameOk
+      ? fullNameIssue || "Enter your full name"
+      : !coupAiOk
+        ? coupAiIssue || "Name your Coup AI"
+        : localReady
+          ? "Upload to coup-master"
+          : "Run Test locally and get READY first";
+  const fullNameHint = fullNameIssue
+    ? `<p class="field-error">${escapeHtml(fullNameIssue)}</p>`
+    : `<p class="muted field-hint">First and last name, as you'd write it on a form</p>`;
+  const coupAiHint = showCoupAiError
+    ? `<p class="field-error">${escapeHtml(coupAiIssue)}</p>`
+    : `<p class="muted field-hint">Public handle on the hub — letters, numbers, _ and - only</p>`;
+
+  let statusHtml = "";
+  if (s.error) {
+    statusHtml = `<div class="session-error">${escapeHtml(s.error)}</div>`;
+  } else if (s.success) {
+    statusHtml = `<div class="submit-success">${escapeHtml(s.success)}</div>`;
+  }
+  if (report && !s.success) {
+    const ready = report.ready && report.name_ok !== false;
+    const badge = ready ? "READY" : "NOT READY";
+    const badgeClass = ready ? "ready" : "not-ready";
+    const issueList = report.issues || [];
+    const issues = issueList.length
+      ? `<ul class="submit-issues">${issueList
+          .map((issue) => `<li>${escapeHtml(issue)}</li>`)
+          .join("")}</ul>`
+      : "";
+    const failNote =
+      !ready && !s.error
+        ? `<p class="field-error">Fix the issues below, then run Test locally again.</p>`
+        : "";
+    statusHtml += `
+      <div class="submit-report">
+        ${failNote}
+        <div class="submit-badge ${badgeClass}">${badge}</div>
+        <pre class="submit-report-text">${escapeHtml(report.text || "")}</pre>
+        ${issues}
+      </div>`;
+  }
+
+  return `
+    <div class="modal-backdrop" id="submit-backdrop" role="presentation">
+      <div class="modal rules-modal submit-modal" role="dialog" aria-modal="true" aria-labelledby="submit-title">
+        <div class="panel-head">
+          <div>
+            <p class="eyebrow">Settings</p>
+            <h2 id="submit-title">Submit agent</h2>
+          </div>
+          <div class="submit-head-actions">
+            ${renderHubStatus()}
+            <button type="button" class="btn" id="close-submit">Close</button>
+          </div>
+        </div>
+        <div class="rules-scroll submit-body">
+          <div class="agent-catalog-group">
+            <div class="agent-catalog-label"><span class="agent-catalog-title">${localAgentsIcon()}Your local agents</span></div>
+            <div class="agent-grid">${picks}</div>
+          </div>
+          <div class="field">
+            <label for="submit-full-name">Your full name</label>
+            <input id="submit-full-name" type="text" autocomplete="name" spellcheck="false"
+              placeholder="Ada Lovelace" value="${escapeAttr(s.fullName || "")}" ${busy ? "disabled" : ""}
+              aria-invalid="${fullNameIssue && (s.fullName || "").trim() ? "true" : "false"}">
+            ${fullNameHint}
+          </div>
+          <div class="field">
+            <label for="submit-name">Name of your Coup AI</label>
+            <input id="submit-name" type="text" autocomplete="off" spellcheck="false"
+              placeholder="milo_bot" value="${escapeAttr(s.name || "")}" ${busy ? "disabled" : ""}
+              aria-invalid="${showCoupAiError ? "true" : "false"}">
+            ${coupAiHint}
+          </div>
+          ${statusHtml}
+          <div class="controls submit-actions">
+            <button class="btn" type="button" id="test-submit-agent" ${canAct ? "" : "disabled"}>
+              ${s.busy === "test" ? "Testing…" : "Test locally"}
+            </button>
+            <button class="btn primary" type="button" id="confirm-submit-agent" ${
+              canSubmit ? "" : "disabled"
+            } title="${escapeAttr(submitTitle)}">
+              ${s.busy === "submit" ? "Submitting…" : "Submit to hub"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>`;
+}
+
+let menuCloser = null;
+
+function unbindMenuCloser() {
+  if (!menuCloser) return;
+  document.removeEventListener("click", menuCloser);
+  menuCloser = null;
+}
+
+function closeSetupMenu() {
+  state.setupMenuOpen = false;
+  unbindMenuCloser();
+}
+
+function bindMenuCloser() {
+  unbindMenuCloser();
+  if (!state.setupMenuOpen) return;
+  menuCloser = (event) => {
+    const menu = document.querySelector(".menu");
+    if (menu && menu.contains(event.target)) return;
+    closeSetupMenu();
+    render();
+  };
+  setTimeout(() => {
+    if (menuCloser) document.addEventListener("click", menuCloser);
+  }, 0);
+}
+
+async function openSubmitModal() {
+  closeSetupMenu();
+  state.submitOpen = true;
+  // Keep agent / name / last READY report across open/close.
+  const local = localAgents();
+  if (!state.submit.agent && local.length) {
+    state.submit.agent = local[0].id;
+    if (!state.submit.name) state.submit.name = local[0].id;
+  }
+  state.hubPing = { status: "checking", error: null, version: null };
+  render();
+  if (!state.hub) {
+    await loadHub();
+  }
+  await pingHub();
+  if (state.submitOpen) render();
+}
+
+function closeSubmitModal() {
+  const submitName = document.getElementById("submit-name");
+  if (submitName) state.submit.name = submitName.value;
+  const submitFullName = document.getElementById("submit-full-name");
+  if (submitFullName) state.submit.fullName = submitFullName.value;
+  state.submitOpen = false;
+  state.submit.busy = null;
+  if (submitKeyHandler) {
+    document.removeEventListener("keydown", submitKeyHandler);
+    submitKeyHandler = null;
+  }
+  render();
+}
+
+let submitKeyHandler = null;
+
+function bindSubmitEscape() {
+  if (submitKeyHandler) {
+    document.removeEventListener("keydown", submitKeyHandler);
+    submitKeyHandler = null;
+  }
+  if (!state.submitOpen) return;
+  submitKeyHandler = (event) => {
+    if (event.key === "Escape" && !state.submit.busy) closeSubmitModal();
+  };
+  document.addEventListener("keydown", submitKeyHandler);
+}
+
+function bindSubmitModal() {
+  if (!state.submitOpen) return;
+  bindSubmitEscape();
+  document.getElementById("close-submit")?.addEventListener("click", () => {
+    if (!state.submit.busy) closeSubmitModal();
+  });
+  document.getElementById("submit-backdrop")?.addEventListener("click", (event) => {
+    if (event.target === event.currentTarget && !state.submit.busy) closeSubmitModal();
+  });
+  document.querySelectorAll("[data-submit-agent]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      if (state.submit.busy) return;
+      const id = btn.getAttribute("data-submit-agent");
+      const prev = state.submit.agent;
+      state.submit.agent = id;
+      if (!state.submit.name || state.submit.name === prev) {
+        state.submit.name = id;
+      }
+      state.submit.report = null;
+      state.submit.error = null;
+      state.submit.success = null;
+      render();
+    });
+  });
+  const nameInput = document.getElementById("submit-name");
+  nameInput?.addEventListener("input", () => {
+    const pos = nameInput.selectionStart;
+    state.submit.name = nameInput.value;
+    state.submit.success = null;
+    state.submit.error = null;
+    if (state.submit.report) state.submit.report = null;
+    render();
+    const again = document.getElementById("submit-name");
+    if (again) {
+      again.focus();
+      if (typeof pos === "number") again.setSelectionRange(pos, pos);
+    }
+  });
+  const fullNameInput = document.getElementById("submit-full-name");
+  fullNameInput?.addEventListener("input", () => {
+    const pos = fullNameInput.selectionStart;
+    state.submit.fullName = fullNameInput.value;
+    state.submit.success = null;
+    state.submit.error = null;
+    render();
+    const again = document.getElementById("submit-full-name");
+    if (again) {
+      again.focus();
+      if (typeof pos === "number") again.setSelectionRange(pos, pos);
+    }
+  });
+  document.getElementById("ping-hub")?.addEventListener("click", async () => {
+    if (state.hubPing?.status === "checking") return;
+    state.hubPing = { status: "checking", error: null, version: null };
+    render();
+    await pingHub();
+    if (state.submitOpen) render();
+  });
+  document.getElementById("test-submit-agent")?.addEventListener("click", () => runSubmitTest());
+  document.getElementById("confirm-submit-agent")?.addEventListener("click", () => runSubmitUpload());
+}
+
+async function runSubmitTest() {
+  const agent = state.submit.agent;
+  const name = (state.submit.name || "").trim();
+  const nameIssue = coupAiNameError(name);
+  if (!agent || state.submit.busy) return;
+  if (nameIssue) {
+    state.submit.error = nameIssue;
+    render();
+    return;
+  }
+  state.submit.busy = "test";
+  state.submit.error = null;
+  state.submit.success = null;
+  state.submit.report = null;
+  render();
+  try {
+    const report = await fetchJson("/api/agents/validate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agent, name, games: 40, sandbox_games: 2 }),
+    });
+    // Keep the detailed NOT READY report visible — don’t cover it with a generic banner.
+    state.submit.report = report;
+    state.submit.error = null;
+  } catch (err) {
+    state.submit.error = err.message;
+  } finally {
+    state.submit.busy = null;
+    render();
+  }
+}
+
+async function runSubmitUpload() {
+  const agent = state.submit.agent;
+  const name = (state.submit.name || "").trim();
+  const fullName = normalizeFullName(state.submit.fullName);
+  if (!agent || state.submit.busy) return;
+  const nameIssue = coupAiNameError(name);
+  if (nameIssue) {
+    state.submit.error = nameIssue;
+    render();
+    return;
+  }
+  const personIssue = fullNameError(fullName);
+  if (personIssue) {
+    state.submit.error = personIssue;
+    render();
+    return;
+  }
+  if (!state.hub?.configured) {
+    state.submit.error = "Hub isn't configured yet — set COUP_MASTER_URL first.";
+    render();
+    return;
+  }
+  const report = state.submit.report;
+  const localReady =
+    Boolean(report) &&
+    report.ready === true &&
+    report.name_ok !== false &&
+    report.safe !== false;
+  if (!localReady) {
+    state.submit.error = "Run Test locally and get READY before submitting.";
+    render();
+    return;
+  }
+  state.submit.busy = "submit";
+  state.submit.error = null;
+  state.submit.success = null;
+  render();
+  try {
+    const meta = await fetchJson("/api/hub/upload", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        agent,
+        name,
+        full_name: fullName,
+        require_ready: true,
+        games: 40,
+        sandbox_games: 2,
+      }),
+    });
+    const who = meta.full_name || meta.uploader || fullName;
+    state.submit.success = `Uploaded ${meta.name} as ${who} (${meta.size_bytes} bytes).`;
+    state.submit.report = {
+      ready: true,
+      name_ok: true,
+      safe: true,
+      issues: [],
+      text: `READY\nuploaded ${meta.name}\nfull name ${who}\nsha256 ${meta.sha256}`,
+    };
+  } catch (err) {
+    state.submit.error = err.message;
+  } finally {
+    state.submit.busy = null;
+    render();
+  }
 }
 
 async function fetchGameLogText(gameId) {
@@ -1519,11 +2544,26 @@ function hydrateSetupAgentsFromRun() {
   }
 }
 
-function openTournamentSetup() {
+async function openTournamentSetup() {
   state.setupMode = "tournament";
   state.setupOpen = true;
-  state.setupMenuOpen = false;
+  closeSetupMenu();
   state.setupError = null;
+  // Hub approvals land after upload; refresh so Submitted picks up coup-master.
+  await loadAgents({ quiet: true });
+  render();
+}
+
+function tournamentDraftPending() {
+  if (state.setupMode !== "tournament" || !state.runId) return false;
+  const finishedRounds =
+    typeof state.standings?.rounds === "number"
+      ? state.standings.rounds
+      : (state.runRounds || []).filter((r) => state.roundSummaries[r]?.agents?.length).length;
+  if (finishedRounds > 0) return false;
+  const sessionRounds =
+    state.session?.run_id === state.runId ? state.session.rounds || [] : [];
+  return sessionRounds.length === 0;
 }
 
 async function openRoundSetup() {
@@ -1531,13 +2571,14 @@ async function openRoundSetup() {
   syncLivePolling();
   hydrateSetupAgentsFromRun();
   if (state.setup.agents.length < 2) {
-    openTournamentSetup();
+    await openTournamentSetup();
     state.setupError = "Pick agents for a new tournament first.";
+    render();
     return;
   }
   state.setupMode = "round";
   state.setupOpen = true;
-  state.setupMenuOpen = false;
+  closeSetupMenu();
   state.setupError = null;
 }
 
@@ -1561,14 +2602,21 @@ function startNewTournament() {
 
 function bindSessionControls() {
   document.getElementById("toggle-setup")?.addEventListener("click", () => {
-    if (state.setupOpen && state.setupMode === "round") {
+    if (state.setupOpen && state.setupMode === "tournament") {
+      readSetupFieldsFromDom();
       state.setupOpen = false;
-      state.setupMenuOpen = false;
+      closeSetupMenu();
       state.setupError = null;
       render();
       return;
     }
-    openRoundSetup().then(() => render());
+    // Reopen a closed draft instead of wiping agent picks / minting a new run.
+    if (!state.setupOpen && tournamentDraftPending()) {
+      openTournamentSetup();
+      render();
+      return;
+    }
+    startNewTournament();
   });
 }
 
@@ -1602,24 +2650,30 @@ function readSetupFieldsFromDom() {
 
 function bindSetup() {
   if (!state.setupOpen) return;
-  const picking = state.setupMode === "tournament";
+  const picking = state.setupMode === "tournament" || state.setupMode === "manual";
+  const manual = state.setupMode === "manual";
   document.getElementById("close-setup")?.addEventListener("click", () => {
+    readSetupFieldsFromDom();
     state.setupOpen = false;
     render();
   });
-  document.getElementById("setup-seed")?.addEventListener("change", (event) => {
+  document.getElementById("setup-seed")?.addEventListener("input", (event) => {
     const raw = String(event.target.value ?? "").trim();
     state.setup.seed = raw === "" ? null : Number(raw);
   });
-  document.getElementById("setup-timeout")?.addEventListener("change", (event) => {
+  document.getElementById("setup-timeout")?.addEventListener("input", (event) => {
     state.setup.timeout = Number(event.target.value) || 1;
   });
-  document.getElementById("setup-games")?.addEventListener("change", (event) => {
+  document.getElementById("setup-games")?.addEventListener("input", (event) => {
     state.setup.games = Math.max(1, Number(event.target.value) || 1);
+  });
+  document.getElementById("setup-games")?.addEventListener("change", () => {
+    readSetupFieldsFromDom();
     render();
   });
   document.querySelectorAll("[data-prefer-size]").forEach((btn) => {
     btn.addEventListener("click", () => {
+      readSetupFieldsFromDom();
       state.setup.tableSize = Number(btn.getAttribute("data-prefer-size")) || 5;
       state.setupError = null;
       render();
@@ -1630,6 +2684,16 @@ function bindSetup() {
       btn.addEventListener("click", () => {
         const id = btn.getAttribute("data-add-agent");
         if (!id) return;
+        if (manual && state.setup.agents.length >= 5) {
+          state.setupError = "At most 5 agent opponents.";
+          render();
+          return;
+        }
+        if (manual && state.setup.agents.includes(id)) {
+          state.setupError = "Each opponent once — pick different agents.";
+          render();
+          return;
+        }
         state.setup.agents.push(id);
         state.setupError = null;
         render();
@@ -1646,21 +2710,138 @@ function bindSetup() {
     });
     document.getElementById("add-all-standard")?.addEventListener("click", () => {
       const standardIds = availableAgents().filter(isStandardAgent).map((agent) => agent.id);
-      state.setup.agents.push(...standardIds);
-      state.setupError = null;
-      render();
+      if (manual) {
+        addManualOpponents(standardIds);
+      } else {
+        state.setup.agents.push(...standardIds);
+        state.setupError = null;
+        render();
+      }
     });
     document.getElementById("add-all-local")?.addEventListener("click", () => {
       const localIds = availableAgents()
         .filter((agent) => agent.kind === "local")
         .map((agent) => agent.id);
       if (!localIds.length) return;
-      state.setup.agents.push(...localIds);
-      state.setupError = null;
-      render();
+      if (manual) {
+        addManualOpponents(localIds);
+      } else {
+        state.setup.agents.push(...localIds);
+        state.setupError = null;
+        render();
+      }
+    });
+    document.getElementById("add-all-submitted")?.addEventListener("click", () => {
+      const submittedIds = availableAgents()
+        .filter((agent) => agent.kind === "submission")
+        .map((agent) => agent.id);
+      if (!submittedIds.length) return;
+      if (manual) {
+        addManualOpponents(submittedIds);
+      } else {
+        state.setup.agents.push(...submittedIds);
+        state.setupError = null;
+        render();
+      }
     });
   }
-  document.getElementById("start-session")?.addEventListener("click", () => startSession());
+  document.getElementById("start-session")?.addEventListener("click", () => {
+    if (manual) startManualGame();
+    else startSession();
+  });
+}
+
+function addManualOpponents(ids) {
+  const next = [...state.setup.agents];
+  for (const id of ids) {
+    if (next.includes(id)) continue;
+    if (next.length >= 5) break;
+    next.push(id);
+  }
+  state.setup.agents = next;
+  state.setupError = next.length >= 5 && ids.some((id) => !state.setup.agents.includes(id))
+    ? "Filled to 5 opponents."
+    : null;
+  render();
+}
+
+async function openManualSetup() {
+  state.setupMode = "manual";
+  state.setupOpen = true;
+  closeSetupMenu();
+  state.setupError = null;
+  state.submitOpen = false;
+  if (!state.setup.agents.length) {
+    state.setup.agents = ["random", "honest", "bluffer"].filter((id) =>
+      availableAgents().some((agent) => agent.id === id)
+    );
+  }
+  if (state.setup.agents.length > 5) {
+    state.setup.agents = state.setup.agents.slice(0, 5);
+  }
+  await loadAgents({ quiet: true });
+  render();
+}
+
+async function startManualGame() {
+  state.setupError = null;
+  readSetupFieldsFromDom();
+  if (state.setup.agents.length < 1) {
+    state.setupError = "Pick at least 1 agent opponent.";
+    render();
+    return;
+  }
+  if (state.setup.agents.length > 5) {
+    state.setupError = "At most 5 agent opponents.";
+    render();
+    return;
+  }
+  const seed =
+    state.setup.seed == null || state.setup.seed === ""
+      ? randomSeed()
+      : Number(state.setup.seed);
+  if (!Number.isFinite(seed)) {
+    state.setupError = "Seed must be a number, or leave blank for random.";
+    render();
+    return;
+  }
+  const payload = {
+    agents: [...state.setup.agents],
+    seed,
+    timeout: Number(state.setup.timeout) || 1,
+  };
+  try {
+    state.manualBusy = true;
+    state.manualError = null;
+    state.manual = await fetchJson("/api/manual/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    state.manualExchangeKeep = [];
+    state.setupOpen = false;
+    state.setupMenuOpen = false;
+    state.manualBusy = false;
+    if (location.hash === "#/manual") {
+      state.view = "manual";
+      render();
+    } else {
+      location.hash = "#/manual";
+    }
+  } catch (err) {
+    state.manualBusy = false;
+    state.setupError = err.message || String(err);
+    render();
+  }
+}
+
+async function loadManual({ quiet = false } = {}) {
+  try {
+    state.manual = await fetchJson("/api/manual");
+  } catch (err) {
+    if (!quiet) console.error(err);
+    state.manualError = err.message || String(err);
+  }
 }
 
 async function startSession() {
@@ -1677,7 +2858,7 @@ async function startSession() {
     render();
     return;
   }
-  // New tournament agent-pick always starts at round 1; Play Games continues the run.
+  // New tournament agent-pick always starts at round 1; Another round continues the run.
   const roundNumber = state.setupMode === "tournament" ? 1 : nextRoundNumber();
   const seed =
     state.setup.seed == null || state.setup.seed === ""

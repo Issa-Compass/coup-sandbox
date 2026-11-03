@@ -58,13 +58,13 @@ class Tendencies:
     # Speculative challenges need 2 influence unless the claim is high-stakes.
     spare_life_for_speculate: bool = True
 
-    # Action bluffs (0–1). Honest keeps all at 0.
+    # Action bluffs (0–1). Honest keeps these low; bluffer pushes them up.
     bluff_tax: float = 0.0
     bluff_assassinate: float = 0.0
     bluff_steal: float = 0.0
     bluff_exchange: float = 0.0
 
-    # Last-life Contessa vs Assassinate (survival). Honest turns this off.
+    # Last-life Contessa vs Assassinate (survival). Honest and the ladder keep this on.
     survival_contessa_bluff: bool = True
     # Block bluffs beyond last-life Contessa floor.
     bluff_block_contessa_at_two: float = 0.0

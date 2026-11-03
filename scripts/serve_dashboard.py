@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import mimetypes
+import os
 import random
 import re
 import sys
@@ -25,21 +26,72 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from coup.runner.catalog import list_available_agents, resolve_agent  # noqa: E402
+
+def _load_repo_dotenv() -> None:
+    """Load KEY=VALUE from repo `.env` without overriding existing env vars."""
+
+    path = ROOT / ".env"
+    if not path.is_file():
+        return
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export ") :].strip()
+        if "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        if not key or key in os.environ:
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+            value = value[1:-1]
+        os.environ[key] = value
+
+from coup.hub_client import (  # noqa: E402
+    HubError,
+    download_agent,
+    list_remote_agents,
+    master_url,
+    ping_hub,
+    upload_agent,
+    validate_full_name,
+    validate_local_name,
+)
+from coup.runner.catalog import (  # noqa: E402
+    LOCAL,
+    SUBMISSIONS,
+    arena_agent_id,
+    arena_name,
+    display_name_for_token,
+    list_available_agents,
+    resolve_agent,
+)
+from coup.runner.load_agent import unique_instance_names  # noqa: E402
+from coup.runner.manual import ManualGame, snapshot_dict  # noqa: E402
+from coup.runner.players import open_player  # noqa: E402
+from coup.runner.testing import evaluate  # noqa: E402
 from coup.runner.tournament import run_round  # noqa: E402
 
 DASHBOARD = ROOT / "dashboard"
 
 SAFE_RUN = re.compile(r"^[A-Za-z0-9._-]+$")
 SAFE_GAME = re.compile(r"^g\d{4}$")
-SAFE_AGENT = re.compile(r"^[A-Za-z0-9._-]+$")
+# Bare local/example ids, or namespaced arena:<hub_name> (hub names are [A-Za-z0-9_-]+).
+SAFE_AGENT = re.compile(r"^(?:arena:[A-Za-z0-9_-]+|[A-Za-z0-9._-]+)$")
+SAFE_HUB_NAME = re.compile(r"^[A-Za-z0-9_-]+$")
+DEFAULT_VALIDATE_GAMES = 40
+DEFAULT_VALIDATE_SANDBOX_GAMES = 2
 
 
 class SessionController:
     """One background multi-round tournament at a time."""
 
-    def __init__(self, results: Path) -> None:
+    def __init__(self, results: Path, hub_base: str = "") -> None:
         self.results = results
+        self.hub_base = (hub_base or "").rstrip("/")
         self.lock = threading.Lock()
         self._cancel = False
         self._thread: threading.Thread | None = None
@@ -61,7 +113,7 @@ class SessionController:
         with self.lock:
             if self.state["status"] == "running":
                 raise ValueError("a session is already running")
-            config = _parse_session_config(payload)
+            config = _parse_session_config(payload, hub_base=self.hub_base)
             self._cancel = False
             self.state = {
                 "status": "running",
@@ -92,7 +144,9 @@ class SessionController:
 
     def _run(self, config: dict[str, Any]) -> None:
         try:
-            paths = [resolve_agent(alias) for alias in config["agents"]]
+            aliases = list(config["agents"])
+            paths = [_ensure_agent(alias, hub_base=self.hub_base) for alias in aliases]
+            seat_names = [display_name_for_token(alias) for alias in aliases]
             for index, round_cfg in enumerate(config["rounds"]):
                 if self._should_stop():
                     raise RuntimeError("session stopped")
@@ -115,6 +169,7 @@ class SessionController:
                     force=config["force"],
                     on_progress=self._on_progress,
                     should_stop=self._should_stop,
+                    agent_names=seat_names,
                 )
             with self.lock:
                 self.state["status"] = "done"
@@ -154,15 +209,97 @@ class SessionController:
                 self.state["message"] = f"Round {event['round']} complete"
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Serve the Coup organizer dashboard.")
-    parser.add_argument("--results", type=Path, default=ROOT / "results")
-    parser.add_argument("--port", type=int, default=8765)
-    parser.add_argument("--host", default="127.0.0.1")
-    args = parser.parse_args()
-    results = args.results.resolve()
+class ManualController:
+    """One interactive human-vs-agents game at a time."""
+
+    def __init__(self, hub_base: str = "") -> None:
+        self.hub_base = (hub_base or "").rstrip("/")
+        self.lock = threading.Lock()
+        self._game: ManualGame | None = None
+
+    def snapshot(self) -> dict[str, Any]:
+        with self.lock:
+            return self._snapshot_unlocked()
+
+    def stop(self) -> dict[str, Any]:
+        with self.lock:
+            if self._game is not None:
+                self._game.close()
+                self._game = None
+            return self._snapshot_unlocked()
+
+    def start(self, payload: dict[str, Any]) -> dict[str, Any]:
+        with self.lock:
+            if self._game is not None:
+                status = self._game.snapshot().status
+                if status in ("waiting", "thinking"):
+                    raise ValueError("a manual game is already in progress — stop it first")
+                self._game.close()
+                self._game = None
+            config = _parse_manual_config(payload, hub_base=self.hub_base)
+            players = [
+                open_player(path, name, sandbox=False, timeout=config["timeout"])
+                for path, name in zip(config["paths"], config["seat_names"])
+            ]
+            game = ManualGame(players, seed=config["seed"])
+            try:
+                snap = game.start()
+            except Exception:
+                game.close()
+                raise
+            self._game = game
+            return snapshot_dict(snap)
+
+    def move(self, payload: dict[str, Any]) -> dict[str, Any]:
+        with self.lock:
+            if self._game is None:
+                raise ValueError("no manual game in progress")
+            if not isinstance(payload, dict):
+                raise ValueError("decision must be an object")
+            snap = self._game.submit(payload)
+            return snapshot_dict(snap)
+
+    def step(self) -> dict[str, Any]:
+        with self.lock:
+            if self._game is None:
+                raise ValueError("no manual game in progress")
+            snap = self._game.step_agent()
+            return snapshot_dict(snap)
+
+    def _snapshot_unlocked(self) -> dict[str, Any]:
+        if self._game is None:
+            return {
+                "status": "idle",
+                "human_seat": 0,
+                "human_name": "You",
+                "agents": [],
+                "seed": None,
+                "board": None,
+                "prompt": None,
+                "view": None,
+                "history": [],
+                "result": None,
+                "error": None,
+                "message": "Pick opponents, then Play.",
+            }
+        return snapshot_dict(self._game.snapshot())
+
+
+def make_handler(
+    *,
+    results: Path,
+    hub_base: str = "",
+    session: SessionController | None = None,
+    manual: ManualController | None = None,
+    quiet: bool = False,
+) -> type[BaseHTTPRequestHandler]:
+    """Build the dashboard request handler (also used by tests)."""
+
+    results = results.resolve()
     results.mkdir(parents=True, exist_ok=True)
-    session = SessionController(results)
+    hub = (hub_base or "").rstrip("/")
+    controller = session or SessionController(results, hub_base=hub)
+    manual_controller = manual or ManualController(hub_base=hub)
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802
@@ -182,13 +319,38 @@ def main() -> None:
             self.send_error(404)
 
         def log_message(self, format: str, *args) -> None:  # noqa: A003
+            if quiet:
+                return
             print(f"{self.address_string()} {format % args}")
 
         def _api_get(self, path: str) -> None:
             parts = [part for part in path.split("/") if part]
             try:
                 if parts == ["api", "agents"]:
-                    self._json(200, {"agents": list_available_agents()})
+                    self._json(200, {"agents": _agents_with_hub(hub)})
+                    return
+                if parts == ["api", "hub"]:
+                    self._json(
+                        200,
+                        {
+                            "configured": bool(hub),
+                            "master_url": hub or None,
+                        },
+                    )
+                    return
+                if parts == ["api", "hub", "ping"]:
+                    self._hub_ping()
+                    return
+                if parts == ["api", "hub", "agents"]:
+                    self._hub_list()
+                    return
+                if (
+                    len(parts) == 4
+                    and parts[0] == "api"
+                    and parts[1] == "hub"
+                    and parts[2] == "agents"
+                ):
+                    self._hub_download(parts[3])
                     return
                 if parts == ["api", "rules"]:
                     rules_path = ROOT / "RULES.md"
@@ -198,7 +360,10 @@ def main() -> None:
                     self._json(200, {"text": rules_path.read_text(encoding="utf-8")})
                     return
                 if parts == ["api", "session"]:
-                    self._json(200, session.snapshot())
+                    self._json(200, controller.snapshot())
+                    return
+                if parts == ["api", "manual"]:
+                    self._json(200, manual_controller.snapshot())
                     return
                 if parts == ["api", "runs"]:
                     self._json(200, {"runs": _list_runs(results)})
@@ -275,10 +440,31 @@ def main() -> None:
             try:
                 body = self._read_body()
                 if parts == ["api", "session", "start"]:
-                    self._json(200, session.start(body))
+                    self._json(200, controller.start(body))
                     return
                 if parts == ["api", "session", "stop"]:
-                    self._json(200, session.stop())
+                    self._json(200, controller.stop())
+                    return
+                if parts == ["api", "manual", "start"]:
+                    self._json(200, manual_controller.start(body))
+                    return
+                if parts == ["api", "manual", "move"]:
+                    self._json(200, manual_controller.move(body))
+                    return
+                if parts == ["api", "manual", "step"]:
+                    self._json(200, manual_controller.step())
+                    return
+                if parts == ["api", "manual", "stop"]:
+                    self._json(200, manual_controller.stop())
+                    return
+                if parts == ["api", "agents", "validate"]:
+                    self._validate_agent(body)
+                    return
+                if parts == ["api", "hub", "upload"]:
+                    self._hub_upload(body)
+                    return
+                if parts == ["api", "hub", "download"]:
+                    self._hub_download_body(body)
                     return
             except ValueError as exc:
                 self._json(400, {"error": str(exc)})
@@ -287,6 +473,185 @@ def main() -> None:
                 self._json(400, {"error": "invalid json"})
                 return
             self._json(404, {"error": "not found"})
+
+        def _require_hub(self) -> str:
+            if not hub:
+                raise ValueError("coup-master not configured (set COUP_MASTER_URL or --master-url)")
+            return hub
+
+        def _hub_ping(self) -> None:
+            if not hub:
+                self._json(
+                    200,
+                    {
+                        "configured": False,
+                        "ok": False,
+                        "status": "offline",
+                        "error": "coup-master not configured",
+                    },
+                )
+                return
+            try:
+                result = ping_hub(hub, timeout=5.0)
+            except HubError as exc:
+                self._json(
+                    200,
+                    {
+                        "configured": True,
+                        "ok": False,
+                        "status": "offline",
+                        "error": str(exc),
+                        "version": None,
+                    },
+                )
+                return
+            self._json(
+                200,
+                {
+                    "configured": True,
+                    "ok": True,
+                    "status": "ready",
+                    "version": result.get("version"),
+                    "error": None,
+                },
+            )
+
+        def _hub_list(self) -> None:
+            try:
+                base = self._require_hub()
+                agents = list_remote_agents(base_url=base)
+            except ValueError as exc:
+                self._json(400, {"error": str(exc)})
+                return
+            except HubError as exc:
+                self._json(exc.status or 502, {"error": str(exc), "issues": exc.issues})
+                return
+            self._json(
+                200,
+                {
+                    "agents": [
+                        {
+                            "name": a.name,
+                            "sha256": a.sha256,
+                            "size_bytes": a.size_bytes,
+                            "uploaded_at": a.uploaded_at,
+                            "uploader": a.uploader,
+                            "full_name": a.full_name,
+                        }
+                        for a in agents
+                    ]
+                },
+            )
+
+        def _hub_download(self, name: str) -> None:
+            if not SAFE_HUB_NAME.fullmatch(name):
+                self._json(400, {"error": "invalid agent name"})
+                return
+            try:
+                base = self._require_hub()
+                dest = LOCAL / name / "agent.py"
+                written = download_agent(name, dest, base_url=base)
+            except ValueError as exc:
+                self._json(400, {"error": str(exc)})
+                return
+            except HubError as exc:
+                self._json(exc.status or 502, {"error": str(exc), "issues": exc.issues})
+                return
+            self._json(200, {"name": name, "path": str(written.relative_to(ROOT))})
+
+        def _hub_download_body(self, body: dict[str, Any]) -> None:
+            name = body.get("name")
+            if not isinstance(name, str) or not SAFE_HUB_NAME.fullmatch(name):
+                raise ValueError("name must match [A-Za-z0-9_-]+")
+            self._hub_download(name)
+
+        def _validate_agent(self, body: dict[str, Any]) -> None:
+            path = _resolve_agent_path(body)
+            name = body.get("name")
+            name_issues: list[str] = []
+            if name is not None:
+                if not isinstance(name, str):
+                    raise ValueError("name must be a string")
+                try:
+                    validate_local_name(name)
+                except HubError as exc:
+                    name_issues.append(str(exc))
+            games = int(body.get("games", DEFAULT_VALIDATE_GAMES))
+            sandbox_games = int(body.get("sandbox_games", DEFAULT_VALIDATE_SANDBOX_GAMES))
+            timeout = float(body.get("timeout", 1.0))
+            if games < 1:
+                raise ValueError("games must be >= 1")
+            if sandbox_games < 0:
+                raise ValueError("sandbox_games must be >= 0")
+            if timeout <= 0:
+                raise ValueError("timeout must be positive")
+            report = evaluate(path, games=games, timeout=timeout, sandbox_games=sandbox_games)
+            payload = report.as_dict()
+            payload["agent"] = body.get("agent")
+            payload["name"] = name
+            payload["name_ok"] = not name_issues
+            payload["name_issues"] = name_issues
+            payload["safe"] = report.ready and not name_issues
+            if name_issues:
+                payload["ready"] = False
+                payload["issues"] = [*name_issues, *payload["issues"]]
+                payload["text"] = report.text() + "\n" + "\n".join(f"  - {item}" for item in name_issues)
+            self._json(200, payload)
+
+        def _hub_upload(self, body: dict[str, Any]) -> None:
+            name = body.get("name")
+            if not isinstance(name, str) or not SAFE_HUB_NAME.fullmatch(name):
+                raise ValueError("name must match [A-Za-z0-9_-]+")
+            try:
+                validate_local_name(name)
+            except HubError as exc:
+                raise ValueError(str(exc)) from exc
+            path = _resolve_agent_path(body, fallback_name=name)
+            # Always re-run local safety + readiness (static allowlist, valid Agent,
+            # legal play) before upload — clients cannot skip with require_ready=false.
+            games = int(body.get("games", DEFAULT_VALIDATE_GAMES))
+            sandbox_games = int(body.get("sandbox_games", DEFAULT_VALIDATE_SANDBOX_GAMES))
+            timeout = float(body.get("timeout", 1.0))
+            report = evaluate(path, games=games, timeout=timeout, sandbox_games=sandbox_games)
+            if not report.ready:
+                self._json(
+                    400,
+                    {
+                        "error": "agent is not ready to submit",
+                        "issues": report.issues
+                        or [
+                            f"illegal={report.illegal}",
+                            f"errors={report.errors}",
+                            f"timeouts={report.timeouts}",
+                        ],
+                        "report": report.as_dict(),
+                    },
+                )
+                return
+            base = self._require_hub()
+            full_name = body.get("full_name", body.get("uploader"))
+            if full_name is not None and not isinstance(full_name, str):
+                raise ValueError("full_name must be a string")
+            try:
+                validate_full_name(full_name)
+            except HubError as exc:
+                raise ValueError(str(exc)) from exc
+            try:
+                meta = upload_agent(name, path, base_url=base, full_name=full_name)
+            except HubError as exc:
+                self._json(exc.status or 502, {"error": str(exc), "issues": exc.issues})
+                return
+            self._json(
+                201,
+                {
+                    "name": meta.name,
+                    "sha256": meta.sha256,
+                    "size_bytes": meta.size_bytes,
+                    "uploaded_at": meta.uploaded_at,
+                    "uploader": meta.uploader,
+                    "full_name": meta.full_name,
+                },
+            )
 
         def _read_body(self) -> dict[str, Any]:
             length = int(self.headers.get("Content-Length", "0"))
@@ -324,12 +689,80 @@ def main() -> None:
             self.end_headers()
             self.wfile.write(data)
 
-    server = ThreadingHTTPServer((args.host, args.port), Handler)
-    print(f"dashboard http://{args.host}:{args.port}  results={results}")
+    return Handler
+
+
+def make_server(
+    *,
+    host: str = "127.0.0.1",
+    port: int = 0,
+    results: Path,
+    hub_base: str = "",
+    session: SessionController | None = None,
+    manual: ManualController | None = None,
+    quiet: bool = False,
+) -> ThreadingHTTPServer:
+    handler = make_handler(
+        results=results, hub_base=hub_base, session=session, manual=manual, quiet=quiet
+    )
+    return ThreadingHTTPServer((host, port), handler)
+
+
+def main() -> None:
+    _load_repo_dotenv()
+    parser = argparse.ArgumentParser(description="Serve the Coup organizer dashboard.")
+    parser.add_argument("--results", type=Path, default=ROOT / "results")
+    parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument(
+        "--master-url",
+        default=None,
+        help="coup-master base URL (else COUP_MASTER_URL). Enables /api/hub/*.",
+    )
+    args = parser.parse_args()
+    results = args.results.resolve()
+    results.mkdir(parents=True, exist_ok=True)
+    hub_base = (args.master_url or master_url() or "").rstrip("/")
+    server = make_server(host=args.host, port=args.port, results=results, hub_base=hub_base)
+    hub_note = hub_base or "(unset — /api/hub disabled)"
+    print(f"dashboard http://{args.host}:{args.port}  results={results}  master={hub_note}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         print("\nstopped")
+
+
+def _resolve_agent_path(body: dict[str, Any], *, fallback_name: str | None = None) -> Path:
+    """Resolve an upload/validate body to an on-disk agent.py under the repo."""
+
+    agent = body.get("agent")
+    path_raw = body.get("path")
+    if agent is not None:
+        if not isinstance(agent, str) or not SAFE_AGENT.fullmatch(agent):
+            raise ValueError(f"invalid agent id: {agent!r}")
+        try:
+            path = resolve_agent(agent)
+        except FileNotFoundError as exc:
+            raise ValueError(str(exc)) from exc
+        return path
+    if path_raw is not None:
+        if not isinstance(path_raw, str):
+            raise ValueError("path must be a string")
+        path = Path(path_raw)
+        if not path.is_file():
+            path = ROOT / path_raw
+        if not path.is_file():
+            raise ValueError(f"file not found: {path_raw}")
+        resolved = path.resolve()
+        if not str(resolved).startswith(str(ROOT.resolve())):
+            raise ValueError("path must be inside the coup-sandbox repo")
+        return resolved
+    if fallback_name:
+        try:
+            return resolve_agent(fallback_name)
+        except FileNotFoundError as exc:
+            raise ValueError(str(exc)) from exc
+    raise ValueError("provide agent id or path")
 
 
 def _idle_session() -> dict[str, Any]:
@@ -353,16 +786,128 @@ def _idle_session() -> dict[str, Any]:
     }
 
 
-def _parse_session_config(payload: dict[str, Any]) -> dict[str, Any]:
+def _agents_with_hub(hub_base: str) -> list[dict[str, str]]:
+    """Examples + local + arena (disk submissions and/or coup-master).
+
+    Local and arena namespaces are independent: a local ``milo`` and hub ``milo``
+    both appear (ids ``milo`` vs ``arena:milo``). Arena names are unique among
+    arena entries only.
+    """
+
+    agents = list_available_agents()
+    by_id = {row["id"]: dict(row) for row in agents}
+    if hub_base:
+        try:
+            remote = list_remote_agents(base_url=hub_base, timeout=8.0)
+        except HubError:
+            remote = []
+        for row in remote:
+            name = row.name
+            if not SAFE_HUB_NAME.fullmatch(name):
+                continue
+            owner = (row.full_name or row.uploader or "").strip()
+            if not owner:
+                # Hide hub agents that were uploaded without a person name.
+                continue
+            aid = arena_agent_id(name)
+            existing = by_id.get(aid)
+            by_id[aid] = {
+                "id": aid,
+                "name": name,
+                "kind": "submission",
+                "path": existing["path"] if existing and existing.get("path") else f"hub:{name}",
+                "source": "hub",
+                "full_name": owner,
+            }
+    # Preserve example order, then local, then arena.
+    examples = [by_id[row["id"]] for row in agents if row["kind"] == "example" and row["id"] in by_id]
+    locals_ = sorted(
+        (row for row in by_id.values() if row.get("kind") == "local"),
+        key=lambda row: row["name"],
+    )
+    submitted = sorted(
+        (row for row in by_id.values() if row.get("kind") == "submission"),
+        key=lambda row: (0 if row.get("source") == "hub" else 1, row["name"]),
+    )
+    submitted = [
+        row
+        for row in submitted
+        if row.get("source") != "hub" or (row.get("full_name") or "").strip()
+    ]
+    return [*examples, *locals_, *submitted]
+
+
+def _ensure_agent(token: str, *, hub_base: str = "") -> Path:
+    """Resolve a catalog token to a file; download hub arena agents into submissions."""
+
+    hub_name = arena_name(token)
+    if hub_name is not None:
+        if not SAFE_HUB_NAME.fullmatch(hub_name):
+            raise FileNotFoundError(f"no agent {token!r}")
+        if hub_base:
+            try:
+                return download_agent(
+                    hub_name,
+                    SUBMISSIONS / hub_name / "agent.py",
+                    base_url=hub_base,
+                )
+            except HubError as exc:
+                raise FileNotFoundError(f"no arena agent {hub_name!r} on hub: {exc}") from exc
+        return resolve_agent(token)
+
+    # Bare ids are local / examples / path only — never silently bind a hub name.
+    return resolve_agent(token)
+
+
+def _parse_manual_config(payload: dict[str, Any], *, hub_base: str = "") -> dict[str, Any]:
+    agents = payload.get("agents")
+    if not isinstance(agents, list) or not agents:
+        raise ValueError("pick at least 1 agent opponent")
+    if len(agents) > 5:
+        raise ValueError("at most 5 agent opponents")
+    cleaned: list[str] = []
+    paths: list[Path] = []
+    for item in agents:
+        if not isinstance(item, str) or not SAFE_AGENT.fullmatch(item):
+            raise ValueError(f"invalid agent id: {item!r}")
+        if item in cleaned:
+            raise ValueError(f"duplicate agent {item!r}")
+        try:
+            path = _ensure_agent(item, hub_base=hub_base)
+        except FileNotFoundError as exc:
+            raise ValueError(str(exc)) from exc
+        cleaned.append(item)
+        paths.append(path)
+    seat_names = unique_instance_names([display_name_for_token(item) for item in cleaned])
+    if "You" in seat_names or "You" in cleaned:
+        raise ValueError("agent id You is reserved for the human player")
+    seed_raw = payload.get("seed", None)
+    if seed_raw is None or seed_raw == "":
+        seed = random.randrange(1, 2**31)
+    else:
+        seed = int(seed_raw)
+    timeout = float(payload.get("timeout", 1.0))
+    if timeout <= 0:
+        raise ValueError("timeout must be positive")
+    return {
+        "agents": cleaned,
+        "paths": paths,
+        "seat_names": seat_names,
+        "seed": seed,
+        "timeout": timeout,
+    }
+
+
+def _parse_session_config(payload: dict[str, Any], *, hub_base: str = "") -> dict[str, Any]:
     agents = payload.get("agents")
     if not isinstance(agents, list) or len(agents) < 2:
         raise ValueError("select at least 2 agents")
     cleaned_agents: list[str] = []
     for item in agents:
-        if not isinstance(item, str) or not SAFE_AGENT.match(item):
+        if not isinstance(item, str) or not SAFE_AGENT.fullmatch(item):
             raise ValueError(f"invalid agent id: {item!r}")
         try:
-            resolve_agent(item)
+            _ensure_agent(item, hub_base=hub_base)
         except FileNotFoundError as exc:
             raise ValueError(str(exc)) from exc
         cleaned_agents.append(item)

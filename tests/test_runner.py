@@ -144,6 +144,31 @@ def test_static_check_bans_network_and_engine_imports():
     assert any("coup.engine" in issue for issue in banned)
     assert static_issues("from coup import engine\n")
     assert static_issues("x = __import__('socket')\n")
+    assert any("eval" in i for i in static_issues("y = eval('1')\nfrom coup.agent_api import Agent\n"))
+    assert any("pickle" in i for i in static_issues("import pickle\nfrom coup.agent_api import Agent\n"))
+    for mod in ("os", "sys", "pathlib", "importlib"):
+        assert any(mod in i for i in static_issues(f"import {mod}\nfrom coup.agent_api import Agent\n")), mod
+    assert any("getattr" in i for i in static_issues("x = getattr(object, 'x')\n"))
+    assert any("open" in i for i in static_issues("f = open('x')\n"))
+    assert any("__class__" in i for i in static_issues("x = (1).__class__\n"))
+
+
+def test_validate_source_requires_one_agent_subclass():
+    from coup.runner.static_check import validate_source
+
+    good = (
+        "from coup.agent_api import Agent, Action, default_action, PlayerView\n\n"
+        "class Bot(Agent):\n"
+        "    def choose_action(self, view: PlayerView) -> Action:\n"
+        "        return default_action(view)\n"
+    )
+    assert validate_source(good) == []
+    assert any("exactly one" in i for i in validate_source("from coup.agent_api import Agent\n"))
+    twin = good + "\nclass Other(Agent):\n    pass\n"
+    assert any("exactly one" in i for i in validate_source(twin))
+    assert any("os" in i for i in static_issues("import os\nfrom coup.agent_api import Agent\n"))
+    assert any("getattr" in i for i in static_issues("getattr(object, 'x')\n"))
+    assert any("__class__" in i for i in static_issues("x = (1).__class__\n"))
 
 
 def test_load_finds_only_the_subclass_defined_in_the_file():
@@ -258,6 +283,32 @@ def test_list_available_agents_includes_indexed_local(tmp_path: Path, monkeypatc
             "path": "local/scratch/agent.py",
         }
     ]
+
+
+def test_local_and_arena_same_name_are_distinct(tmp_path: Path, monkeypatch):
+    import coup.runner.catalog as catalog
+
+    local_root = tmp_path / "local"
+    sub_root = tmp_path / "submissions"
+    local_bot = local_root / "milo" / "agent.py"
+    arena_bot = sub_root / "milo" / "agent.py"
+    local_bot.parent.mkdir(parents=True)
+    arena_bot.parent.mkdir(parents=True)
+    local_bot.write_text("# local\n")
+    arena_bot.write_text("# arena\n")
+    monkeypatch.setattr(catalog, "LOCAL", local_root)
+    monkeypatch.setattr(catalog, "SUBMISSIONS", sub_root)
+    monkeypatch.setattr(catalog, "ROOT", tmp_path)
+    monkeypatch.setattr(catalog, "EXAMPLES", {})
+
+    agents = catalog.list_available_agents()
+    by_id = {row["id"]: row for row in agents}
+    assert by_id["milo"]["kind"] == "local"
+    assert by_id["arena:milo"]["kind"] == "submission"
+    assert by_id["arena:milo"]["name"] == "milo"
+    assert catalog.resolve_agent("milo") == local_bot
+    assert catalog.resolve_agent("arena:milo") == arena_bot
+    assert catalog.display_name_for_token("arena:milo") == "milo"
 
 
 def test_unique_instance_names_suffixes_duplicates():

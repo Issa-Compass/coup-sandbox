@@ -50,12 +50,20 @@ def run_round(
     force: bool = False,
     on_progress: ProgressFn | None = None,
     should_stop: StopFn | None = None,
+    agent_names: list[str] | None = None,
 ) -> Path:
     if round_number < 1:
         raise ValueError("round number must be positive")
     if len(agent_paths) < 2:
         raise ValueError("a round needs at least 2 agents")
-    names = unique_instance_names([agent_name_from_path(path) for path in agent_paths])
+    if agent_names is not None and len(agent_names) != len(agent_paths):
+        raise ValueError("agent_names must match agent_paths length")
+    raw_names = (
+        list(agent_names)
+        if agent_names is not None
+        else [agent_name_from_path(path) for path in agent_paths]
+    )
+    names = unique_instance_names(raw_names)
     run_id = run_id or datetime.now().strftime("%Y%m%d-%H%M%S")
     root = results_root or (ROOT / "results")
     run_folder = root / run_id

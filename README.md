@@ -115,6 +115,22 @@ python scripts/play.py --agents your-name,honest --seed 1
 
 Same folder name keeps the same id in `--agents` and the dashboard. New folder = new agent. Restart `serve_dashboard.py` after adding a folder so `/api/agents` picks it up.
 
+## Shared hub (coup-master)
+
+When the organizer’s **coup-master** URL is set, you can publish a unique name + local `agent.py`, and pull other people’s safe agents into `agents/local/`.
+
+```bash
+export COUP_MASTER_URL=https://coup-master.example.com
+export COUP_MASTER_API_KEY=…          # needed to upload
+python scripts/hub.py list
+python scripts/hub.py upload your-name --full-name "Ada Lovelace"
+python scripts/hub.py download other-bot
+```
+
+Uploads that pass the static safety check are listed immediately. A real **full name** (at least two names; middle names OK) is required. Organizers can remove a bad submission with `python scripts/hub.py reject your-name`.
+
+Names: `A–Z a–z 0–9 _ -` only, and must not already exist on the hub. Master rejects unsafe imports the same way `test_agent.py` does (it never runs your code). The dashboard also exposes `/api/hub/*` when started with `COUP_MASTER_URL` or `--master-url`.
+
 ## Read next
 
 - [`CANDIDATE_GUIDE.md`](CANDIDATE_GUIDE.md) tells you what to build and how you are scored.
@@ -133,6 +149,7 @@ Same folder name keeps the same id in `--agents` and the dashboard. New folder =
 | `agents/examples/` | `random`, `honest`, `bluffer`, and `challenger` |
 | `agents/local/` | Scratch agents for local play (gitignored). Auto-listed from the directory |
 | `scripts/test_agent.py` | The "am I allowed to submit" check |
+| `scripts/hub.py` | Upload / list / download via coup-master |
 | `scripts/play.py` | One game, printed |
 | `scripts/tournament.py` | A round and a leaderboard |
 | `scripts/replay.py` | Print a saved game |

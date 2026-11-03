@@ -34,7 +34,7 @@ The example bots are the ladder (shared foundation + tendency knobs in
 
 - `random` mostly picks legal moves at random, with survival floors (card-count
   impossibles, last-life Contessa). Beat this first.
-- `honest` only claims cards it holds, and only challenges claims that are impossible.
+- `honest` is mostly truthful: rare light bluffs, survival Contessa, and challenges only soft claims.
 - `bluffer` calls Tax and Assassinate a lot, including when it is lying — but
   still Coups threats and does not free-die to Assassinate on last influence.
 - `challenger` plays honestly and challenges soft claims (not coin-flip early Tax).

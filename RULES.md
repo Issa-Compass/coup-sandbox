@@ -99,7 +99,7 @@ After a timeout the process restarts and `on_game_start` runs again with the ope
 
 ## What you are not allowed to do
 
-Your agent may import `coup.agent_api` and the normal standard library. It may not import `coup.engine`, `coup.runner`, `socket`, `requests`, `urllib`, `http`, `subprocess`, `importlib`, or `ctypes`. It may not call `__import__`.
+Your agent may import `coup.agent_api` and a small allowlisted stdlib set (`math`, `random`, `collections`, `dataclasses`, `typing`, `enum`, `itertools`, `functools`, `copy`, `statistics`, …). It may not import anything else (including `os`, `sys`, `pathlib`, `coup.engine`, `coup.runner`, network/process modules). It may not call `__import__`, `eval`, `exec`, `getattr`, `open`, or use `__dunder__` attribute access.
 
 The seed passed to `on_game_start` is only for your random number generator. It is not the deck seed. Public tournament standings are available only through `query_standings` / `query_previous_round_winners` in `coup.agent_api`, and those rows use the same opaque seat UIDs as the table — not real agent names. Do not read the results files, the tournament process, or other people's agents (including to learn hidden cards or real identities). That is a disqualification, not a clever strategy.
 

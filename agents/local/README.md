@@ -49,3 +49,18 @@ python scripts/serve_dashboard.py --port 8765
 ```
 
 In the dashboard, open **Play Games** → **Local** → add the agent (or **Add all**).
+
+## Shared hub
+
+Pull someone else’s safe submission into this folder (needs `COUP_MASTER_URL`):
+
+```bash
+python scripts/hub.py download their-name
+# writes agents/local/their-name/agent.py
+```
+
+Upload yours with a unique name (`A–Z a–z 0–9 _ -`):
+
+```bash
+python scripts/hub.py upload your-name
+```

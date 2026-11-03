@@ -1,4 +1,4 @@
-"""Locate example agents, local scratch agents, and candidate submissions."""
+"""Locate example agents, local scratch agents, and arena (hub/disk) submissions."""
 
 from __future__ import annotations
 
@@ -15,8 +15,52 @@ EXAMPLES = {
 LOCAL = ROOT / "agents" / "local"
 SUBMISSIONS = ROOT / "agents" / "submissions"
 
+# Arena (hub / agents/submissions) ids are namespaced so they never collide with
+# local folder names or example aliases. Display name is still the bare hub name.
+ARENA_PREFIX = "arena:"
+
+
+def arena_agent_id(name: str) -> str:
+    return f"{ARENA_PREFIX}{name}"
+
+
+def is_arena_id(token: str) -> bool:
+    return token.startswith(ARENA_PREFIX) and len(token) > len(ARENA_PREFIX)
+
+
+def arena_name(token: str) -> str | None:
+    """Bare arena/hub name from ``arena:<name>``, or None if not an arena id."""
+
+    if not is_arena_id(token):
+        return None
+    return token[len(ARENA_PREFIX) :]
+
+
+def display_name_for_token(token: str) -> str:
+    """Seat / standings label: bare name for arena ids, otherwise the token."""
+
+    name = arena_name(token)
+    return name if name is not None else token
+
 
 def resolve_agent(token: str) -> Path:
+    """Resolve a catalog token to an on-disk ``agent.py``.
+
+    - ``arena:<name>`` → ``agents/submissions/<name>/`` only (never local).
+    - bare token → examples, then ``agents/local/``, then ``agents/submissions/``,
+      then a filesystem path.
+    """
+
+    arena = arena_name(token)
+    if arena is not None:
+        submission = SUBMISSIONS / arena / "agent.py"
+        if submission.is_file():
+            return submission
+        raise FileNotFoundError(
+            f"no arena agent {arena!r} under agents/submissions/ "
+            "(download from the hub or pick a local agent)"
+        )
+
     if token in EXAMPLES:
         return EXAMPLES[token]
     local = LOCAL / token / "agent.py"
@@ -48,8 +92,15 @@ def submission_agents() -> list[Path]:
     return _folder_agents(SUBMISSIONS)
 
 
+def _catalog_path(path: Path) -> str:
+    try:
+        return str(path.resolve().relative_to(ROOT.resolve()))
+    except ValueError:
+        return str(path.resolve())
+
+
 def list_available_agents() -> list[dict[str, str]]:
-    """Agents the dashboard can pick: examples, local folder, then submissions."""
+    """Agents the dashboard can pick: examples, local folder, then arena submissions."""
 
     agents: list[dict[str, str]] = []
     for alias, path in EXAMPLES.items():
@@ -60,7 +111,7 @@ def list_available_agents() -> list[dict[str, str]]:
                 "id": alias,
                 "name": path.stem,
                 "kind": "example",
-                "path": str(path.relative_to(ROOT)),
+                "path": _catalog_path(path),
             }
         )
     for path in local_agents():
@@ -69,16 +120,17 @@ def list_available_agents() -> list[dict[str, str]]:
                 "id": path.parent.name,
                 "name": path.parent.name,
                 "kind": "local",
-                "path": str(path.relative_to(ROOT)),
+                "path": _catalog_path(path),
             }
         )
     for path in submission_agents():
+        name = path.parent.name
         agents.append(
             {
-                "id": path.parent.name,
-                "name": path.parent.name,
+                "id": arena_agent_id(name),
+                "name": name,
                 "kind": "submission",
-                "path": str(path.relative_to(ROOT)),
+                "path": _catalog_path(path),
             }
         )
     return agents
