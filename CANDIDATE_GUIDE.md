@@ -41,7 +41,7 @@ The example bots are the ladder (shared foundation + tendency knobs in
 
 You can read their source. Copying `challenger` and changing one number is allowed and will not win the event by itself.
 
-The scoreboard uses the points in `RULES.md`, not raw wins. Second place at a 6-player table is worth 3 points. A bot that always comes second beats a bot that sometimes wins and otherwise comes last.
+The scoreboard uses the points in `RULES.md`, not raw wins. At a 6-player table, 1st is worth 6 points (`n` at an `n`-player table) and 2nd is worth 3. A bot that always comes second still beats a bot that wins rarely and otherwise comes last.
 
 ## Decisions you will actually write
 

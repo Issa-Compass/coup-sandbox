@@ -22,13 +22,13 @@ from coup.agent_api import (
 
 
 def placement_points(place: int, player_count: int) -> int:
-    """1st gets ``n - 1``. Later place ``p`` gets ``max(n - p - 1, 0)``.
+    """1st gets ``n``. Later place ``p`` gets ``max(n - p - 1, 0)``.
 
-    A 6-player table is 5, 3, 2, 1, 0, 0. Smaller tables use the same formula.
+    A 6-player table is 6, 3, 2, 1, 0, 0. Smaller tables use the same formula.
     """
 
     if place == 1:
-        return player_count - 1
+        return player_count
     return max(player_count - place - 1, 0)
 
 

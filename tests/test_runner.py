@@ -209,7 +209,7 @@ def test_sandbox_refuses_engine_import(tmp_path: Path):
 
 
 def test_points_constant_is_shared():
-    assert placement_points(1, 6) == 5
+    assert placement_points(1, 6) == 6
 
 
 def test_list_available_agents_includes_examples():

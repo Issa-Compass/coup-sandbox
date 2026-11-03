@@ -71,14 +71,14 @@ Not used at the hackathon. With exactly 2 players the deck has 2 copies of each 
 
 ## Tournament scoring
 
-Each game gives placement points. In an `n`-player game, 1st place gets `n - 1` points. Place `p` after that gets `max(n - p - 1, 0)`.
+Each game gives placement points. In an `n`-player game, 1st place gets `n` points. Place `p` after that gets `max(n - p - 1, 0)`.
 
 | Players | 1st | 2nd | 3rd | 4th | 5th | 6th |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 6 | 5 | 3 | 2 | 1 | 0 | 0 |
-| 5 | 4 | 2 | 1 | 0 | 0 | |
-| 4 | 3 | 1 | 0 | 0 | | |
-| 3 | 2 | 0 | 0 | | | |
+| 6 | 6 | 3 | 2 | 1 | 0 | 0 |
+| 5 | 5 | 2 | 1 | 0 | 0 | |
+| 4 | 4 | 1 | 0 | 0 | | |
+| 3 | 3 | 0 | 0 | | | |
 
 The leaderboard sorts by average points per game, then win rate, then fewer illegal moves, errors, and timeouts, then name.
 

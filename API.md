@@ -128,7 +128,7 @@ Useful `type` values: `start`, `action`, `challenge`, `prove`, `block`, `lose`, 
 
 ## GameResult
 
-`placements` is a tuple of `Placement` (`seat`, `name`, `place`, `points`, `influence`, `coins`), best place first. `winner` is the seat in 1st. `turns` is how many turns were played. `capped` is true when the turn limit ended the game.
+`placements` is a tuple of `Placement` (`seat`, `name`, `place`, `points`, `influence`, `coins`), best place first. `points` follow the tournament table in `RULES.md` (1st gets `n` in an `n`-player game). `winner` is the seat in 1st. `turns` is how many turns were played. `capped` is true when the turn limit ended the game.
 
 ## Tournament standings (optional)
 
