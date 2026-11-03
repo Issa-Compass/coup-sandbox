@@ -251,6 +251,7 @@ a {
   appearance: none;
   font-family: "IBM Plex Mono", monospace;
   font-size: 0.9rem;
+  text-transform: lowercase;
   background-color: rgba(16, 18, 22, 0.85);
   background-image: linear-gradient(45deg, transparent 50%, var(--fog) 50%),
     linear-gradient(135deg, var(--fog) 50%, transparent 50%);
@@ -509,6 +510,7 @@ table.board tbody tr:hover {
 .agent-name {
   font-weight: 600;
   color: var(--paper);
+  text-transform: lowercase;
 }
 
 .muted {
@@ -642,7 +644,7 @@ table.board tbody tr:hover {
   font-weight: 700;
   font-size: 1.15rem;
   letter-spacing: 0.06em;
-  text-transform: uppercase;
+  text-transform: lowercase;
   color: var(--crimson-hot);
 }
 
@@ -699,8 +701,12 @@ table.board tbody tr:hover {
   font-size: clamp(1.4rem, 2.6vw, 2rem);
   font-weight: 700;
   letter-spacing: 0.08em;
-  text-transform: uppercase;
+  text-transform: none;
   line-height: 1;
+}
+
+.play-title h1.game-id {
+  text-transform: lowercase;
 }
 
 .game-winner {
@@ -738,6 +744,7 @@ table.board tbody tr:hover {
   font-weight: 600;
   letter-spacing: 0.02em;
   white-space: nowrap;
+  text-transform: lowercase;
 }
 
 .play-title p {
@@ -797,6 +804,7 @@ table.board tbody tr:hover {
   font-size: 0.72rem;
   font-weight: 500;
   letter-spacing: 0.02em;
+  text-transform: lowercase;
 }
 
 .player-status {
@@ -1208,6 +1216,11 @@ table.board tbody tr:hover {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  text-transform: lowercase;
+}
+
+.seat.you .seat-name {
+  text-transform: none;
 }
 
 .seat-meta {
@@ -2145,6 +2158,11 @@ table.board tbody tr:hover {
 .agent-id {
   font-family: "IBM Plex Mono", monospace;
   font-size: 0.88rem;
+  text-transform: lowercase;
+}
+
+.human-seat .agent-id {
+  text-transform: none;
 }
 
 .seating-block {
@@ -2339,4 +2357,22 @@ table.board tbody tr:hover {
   color: #7dffb0;
   font-family: "IBM Plex Mono", monospace;
   font-size: 0.85rem;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.submit-success-hint {
+  margin: 0;
+  color: var(--fog);
+  font-family: inherit;
+  font-size: 0.8rem;
+}
+
+.agent-pick.submit-pick.on-hub .agent-kind.on-hub,
+.agent-kind.on-hub {
+  color: #7dffb0;
+}
+
+.agent-pick.submit-pick.on-hub:not(.active) {
+  border-color: rgba(46, 160, 90, 0.35);
 }

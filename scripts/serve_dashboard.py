@@ -765,11 +765,12 @@ def _idle_session() -> dict[str, Any]:
 
 
 def _agents_with_hub(hub_base: str) -> list[dict[str, str]]:
-    """Examples + local + arena (disk submissions and/or coup-master).
+    """Examples + local + arena from coup-master only (not agents/submissions/).
 
     Local and arena namespaces are independent: a local ``milo`` and hub ``milo``
     both appear (ids ``milo`` vs ``arena:milo``). Arena names are unique among
-    arena entries only.
+    arena entries only. Disk under ``agents/submissions/`` is a run-time cache
+    after download — it does not populate The Arena catalog.
     """
 
     agents = list_available_agents()
@@ -788,30 +789,30 @@ def _agents_with_hub(hub_base: str) -> list[dict[str, str]]:
                 # Hide hub agents that were uploaded without a person name.
                 continue
             aid = arena_agent_id(name)
-            existing = by_id.get(aid)
             by_id[aid] = {
                 "id": aid,
                 "name": name,
                 "kind": "submission",
-                "path": existing["path"] if existing and existing.get("path") else f"hub:{name}",
+                "path": f"hub:{name}",
                 "source": "hub",
                 "full_name": owner,
             }
-    # Preserve example order, then local, then arena.
+    # Preserve example order, then local, then arena (hub only).
     examples = [by_id[row["id"]] for row in agents if row["kind"] == "example" and row["id"] in by_id]
     locals_ = sorted(
         (row for row in by_id.values() if row.get("kind") == "local"),
         key=lambda row: row["name"],
     )
     submitted = sorted(
-        (row for row in by_id.values() if row.get("kind") == "submission"),
-        key=lambda row: (0 if row.get("source") == "hub" else 1, row["name"]),
+        (
+            row
+            for row in by_id.values()
+            if row.get("kind") == "submission"
+            and row.get("source") == "hub"
+            and (row.get("full_name") or "").strip()
+        ),
+        key=lambda row: row["name"],
     )
-    submitted = [
-        row
-        for row in submitted
-        if row.get("source") != "hub" or (row.get("full_name") or "").strip()
-    ]
     return [*examples, *locals_, *submitted]
 
 

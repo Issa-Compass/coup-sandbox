@@ -304,8 +304,8 @@ def test_local_and_arena_same_name_are_distinct(tmp_path: Path, monkeypatch):
     agents = catalog.list_available_agents()
     by_id = {row["id"]: row for row in agents}
     assert by_id["milo"]["kind"] == "local"
-    assert by_id["arena:milo"]["kind"] == "submission"
-    assert by_id["arena:milo"]["name"] == "milo"
+    # Disk submissions are a run cache only — not in the dashboard catalog.
+    assert "arena:milo" not in by_id
     assert catalog.resolve_agent("milo") == local_bot
     assert catalog.resolve_agent("arena:milo") == arena_bot
     assert catalog.display_name_for_token("arena:milo") == "milo"
