@@ -161,7 +161,48 @@ function defaultSubmit() {
     report: null,
     error: null,
     success: null,
+    /** Hub names uploaded this browser session (lowercase). */
+    uploadedNames: [],
+    /** Last successful upload — used to lock the Submit button. */
+    lastUpload: null, // { agent, name } | null
   };
+}
+
+/** Hub / arena Coup AI names already on the master (lowercase). */
+function hubNameSet() {
+  const names = new Set();
+  for (const agent of availableAgents()) {
+    if (agent.kind !== "submission") continue;
+    const raw = String(agent.name || "").trim();
+    if (raw) names.add(raw.toLowerCase());
+  }
+  for (const name of state.submit.uploadedNames || []) {
+    if (name) names.add(String(name).toLowerCase());
+  }
+  return names;
+}
+
+/**
+ * Why Submit should stay off after a successful upload of this same id.
+ * Intentional hub replaces of an older entry are still allowed; only block
+ * double-submit of a name we just uploaded this session.
+ * @returns {string|null}
+ */
+function duplicateSubmitReason(name, agentId) {
+  const trimmed = String(name || "").trim();
+  if (!trimmed) return null;
+  const key = trimmed.toLowerCase();
+  const uploaded = state.submit.uploadedNames || [];
+  if (!uploaded.includes(key)) return null;
+  const last = state.submit.lastUpload;
+  if (last && String(last.name || "").toLowerCase() === key) {
+    if (!agentId || last.agent === agentId) {
+      return `"${trimmed}" was just submitted — pick a new Coup AI name (or another agent) to upload again`;
+    }
+    // Same hub id, different local file — still a duplicate id this session.
+    return `"${trimmed}" was just submitted under that Coup AI name — choose a new name`;
+  }
+  return `"${trimmed}" was already submitted this session — choose a new Coup AI name`;
 }
 
 const FULL_NAME_RE = /^[A-Za-z][A-Za-z'-]*(?: [A-Za-z][A-Za-z'-]*)+$/;
@@ -562,11 +603,11 @@ function renderChrome(title, subtitle, extra = "") {
           (run) =>
             `<option value="${escapeAttr(run.id)}" ${
               run.id === state.runId ? "selected" : ""
-            }>${escapeHtml(run.id)}</option>`
-        )
-        .join("")
+            }>${escapeHtml(displayId(run.id))}</option>`
+          )
+          .join("")
     : state.runId
-      ? `<option value="${escapeAttr(state.runId)}" selected>${escapeHtml(state.runId)}</option>`
+      ? `<option value="${escapeAttr(state.runId)}" selected>${escapeHtml(displayId(state.runId))}</option>`
       : `<option value="">No runs yet</option>`;
   return `
     <div class="shell">
@@ -702,12 +743,11 @@ function localAgentsIcon() {
 
 function arenaIcon() {
   return `<svg class="icon catalog-section-icon" viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M14.5 17.5 3 6V3h3l11.5 11.5"></path>
-    <path d="M13 19l6-6"></path>
-    <path d="M16 16l4 4"></path>
-    <path d="M9.5 6.5 21 18v3h-3L6.5 9.5"></path>
-    <path d="M11 5l-6 6"></path>
-    <path d="M8 8 4 4"></path>
+    <path d="M8 21h8"></path>
+    <path d="M12 17v4"></path>
+    <path d="M7 4h10v5a5 5 0 0 1-10 0V4z"></path>
+    <path d="M17 8h1a3 3 0 0 0 0-6h-1"></path>
+    <path d="M7 8H6a3 3 0 0 1 0-6h1"></path>
   </svg>`;
 }
 
@@ -716,7 +756,7 @@ function renderGameWinner(winnerName) {
   return `<span class="game-winner" title="Winner">
     ${crownIcon()}
     <span class="game-winner-label">Winner</span>
-    <span class="game-winner-name">${escapeHtml(winnerName)}</span>
+    <span class="game-winner-name">${escapeHtml(displayId(winnerName))}</span>
   </span>`;
 }
 
@@ -735,7 +775,7 @@ function renderPlayerRoster(players, { turnSeat = null } = {}) {
       const status = isTurn ? "Current turn" : out ? "Eliminated" : null;
       return `<span role="listitem" class="${classes}"${status ? ` title="${status}"` : ""}>
         <span class="player-seat">${String(seat + 1).padStart(2, "0")}</span>
-        <span class="player-name">${escapeHtml(name)}</span>
+        <span class="player-name">${escapeHtml(displayId(name))}</span>
         ${isTurn ? `<span class="player-status">Turn</span>` : ""}
       </span>`;
     })
@@ -787,8 +827,12 @@ function agentById(id) {
   return availableAgents().find((agent) => agent.id === id) || { id, kind: "example" };
 }
 
+function displayId(value) {
+  return String(value || "").toLowerCase();
+}
+
 function agentDisplayName(agent) {
-  return (agent && agent.name) || (agent && agent.id) || "";
+  return displayId((agent && agent.name) || (agent && agent.id) || "");
 }
 
 function agentKindLabel(agent) {
@@ -819,6 +863,8 @@ function renderAgentPickerChip(agent, selected) {
     count > 0
       ? `Add another ${label} (${count} in roster)`
       : `Add ${label}`;
+  // Arena chips sit under "The Arena" — skip the redundant kind tag there.
+  const kindHtml = agent.kind === "submission" ? "" : agentKindHtml(agent);
   return `
     <button
       class="agent-pick"
@@ -828,7 +874,7 @@ function renderAgentPickerChip(agent, selected) {
     >
       <span class="agent-pick-plus" aria-hidden="true">+</span>
       <span class="agent-id">${escapeHtml(label)}</span>
-      ${agentKindHtml(agent)}
+      ${kindHtml}
     </button>`;
 }
 
@@ -869,7 +915,7 @@ function renderAgentCatalog() {
     : `<div class="muted agent-catalog-empty">No agents in agents/local yet.</div>`;
   const submittedEmpty = state.hub?.configured
     ? "No approved agents on coup-master yet."
-    : "No submissions in agents/submissions yet.";
+    : "Configure coup-master (.env) to load The Arena from the hub.";
   const submittedPicks = submitted.length
     ? submitted.map((agent) => renderAgentPickerChip(agent, selected)).join("")
     : `<div class="muted agent-catalog-empty">${submittedEmpty}</div>`;
@@ -1024,7 +1070,7 @@ function renderManualRoster() {
           const agent = agentById(id);
           return `
             <div class="agent-seat ${agentSeatClass(agent)}">
-              <span class="agent-id">${escapeHtml(id)}</span>
+              <span class="agent-id">${escapeHtml(displayId(id))}</span>
               ${agentKindHtml(agent)}
               <button class="agent-remove" type="button" data-remove-index="${index}" aria-label="Remove ${escapeAttr(id)}">×</button>
             </div>`;
@@ -1048,7 +1094,7 @@ function renderScoreboard() {
         <div class="panel-head"><h2>Latest Standings</h2></div>
         <div class="empty">No tournament results yet. New Tournament to pick agents, then Another round to play.</div>
       </section>`,
-      "Organizer scoreboard"
+      "Tournament scoreboard"
     );
   }
 
@@ -1096,7 +1142,7 @@ function renderScoreboard() {
 
   return renderChrome(
     `<div class="score-stack">${standingsPanel}${roundPanels}</div>`,
-    "Organizer scoreboard"
+    "Tournament scoreboard"
   );
 }
 
@@ -1116,7 +1162,7 @@ function scoreRow(row, rank) {
   const games = row.games || 0;
   return `<tr>
     <td>${rank}</td>
-    <td class="agent-name">${escapeHtml(row.name)}</td>
+    <td class="agent-name">${escapeHtml(displayId(row.name))}</td>
     <td>${games}</td>
     <td>${row.points}</td>
     <td>${avg(row.points, games)}</td>
@@ -1141,10 +1187,10 @@ function renderGames() {
           const copied = state.copyFlash === `game:${game.id}`;
           return `
         <div class="game-row">
-          <div class="game-id">${escapeHtml(game.id)}</div>
+          <div class="game-id">${escapeHtml(displayId(game.id))}</div>
           <div>
-            <div>${escapeHtml((game.players || []).join(" · "))}</div>
-            <div class="muted" style="margin-top:0.25rem">Winner: ${escapeHtml(game.winner || "—")} · ${game.turns ?? "?"} turns${game.capped ? " (capped)" : ""}</div>
+            <div>${escapeHtml((game.players || []).map(displayId).join(" · "))}</div>
+            <div class="muted" style="margin-top:0.25rem">Winner: ${escapeHtml(game.winner ? displayId(game.winner) : "—")} · ${game.turns ?? "?"} turns${game.capped ? " (capped)" : ""}</div>
           </div>
           <div class="game-actions">
             <a class="pill" href="#/play/${encodeURIComponent(state.runId)}/${state.round}/${encodeURIComponent(game.id)}">Watch</a>
@@ -1224,7 +1270,7 @@ function renderPlayback() {
         <div class="seat ${out ? "out" : ""} ${role} ${isTurn ? "turn" : ""}" style="left:${pos.x}%;top:${pos.y}%" data-seat="${player.seat}">
           <div class="seat-card">
             ${tags.length ? `<div class="seat-tags">${tags.join("")}</div>` : ""}
-            <div class="seat-name">${escapeHtml(player.name)}</div>
+            <div class="seat-name">${escapeHtml(displayId(player.name))}</div>
             <div class="seat-meta">
               <span class="coins">${player.coins ?? "?"}¢</span>
               <span>${player.influence ?? "?"} inf</span>
@@ -1242,7 +1288,7 @@ function renderPlayback() {
         <a class="back-link" href="#/games/${encodeURIComponent(state.runId)}/${state.round}">← Games</a>
         <div class="play-title">
           <div class="play-title-row">
-            <h1>${escapeHtml(pb.header.id || "Game")}</h1>
+            <h1 class="game-id">${escapeHtml(displayId(pb.header.id || "Game"))}</h1>
             ${renderGameWinner(pb.result?.winner)}
           </div>
           ${renderPlayerRoster(players, { turnSeat: roles.turn })}
@@ -1359,7 +1405,7 @@ function renderManualPlay() {
         <div class="seat ${out ? "out" : ""} ${role} ${isTurn ? "turn" : ""} ${isYou ? "you" : ""}" style="left:${pos.x}%;top:${pos.y}%" data-seat="${player.seat}">
           <div class="seat-card">
             ${tags.length ? `<div class="seat-tags">${tags.join("")}</div>` : ""}
-            <div class="seat-name">${escapeHtml(player.name)}</div>
+            <div class="seat-name">${escapeHtml(isYou ? player.name : displayId(player.name))}</div>
             <div class="seat-meta">
               <span class="coins">${player.coins ?? "?"}¢</span>
               <span>${player.influence ?? "?"} inf</span>
@@ -2108,16 +2154,22 @@ function renderSubmitModal() {
   const selected = s.agent;
   const hubReady = state.hubPing?.status === "ready";
   const report = s.report;
+  const taken = hubNameSet();
   const picks = local.length
     ? local
         .map((agent) => {
           const active = agent.id === selected ? "active" : "";
           const label = agentDisplayName(agent);
-          return `<button class="agent-pick submit-pick ${active}" type="button" data-submit-agent="${escapeAttr(
-            agent.id
-          )}">
+          const onHub = taken.has(String(agent.id || "").toLowerCase());
+          const kind = onHub ? "on hub" : "local";
+          const kindClass = onHub ? "agent-kind on-hub" : "agent-kind";
+          return `<button class="agent-pick submit-pick ${active}${
+            onHub ? " on-hub" : ""
+          }" type="button" data-submit-agent="${escapeAttr(agent.id)}" ${
+            onHub ? `title="${escapeAttr(`${label} is already on the hub`)}"` : ""
+          }>
             <span class="agent-id">${escapeHtml(label)}</span>
-            <span class="agent-kind">local</span>
+            <span class="${kindClass}">${escapeHtml(kind)}</span>
           </button>`;
         })
         .join("")
@@ -2129,6 +2181,11 @@ function renderSubmitModal() {
   const nameTrimmed = (s.name || "").trim();
   const coupAiIssue = coupAiNameError(s.name);
   const coupAiOk = !coupAiIssue;
+  const dupReason = duplicateSubmitReason(nameTrimmed, selected);
+  const onHubAlready =
+    Boolean(nameTrimmed) &&
+    !dupReason &&
+    taken.has(nameTrimmed.toLowerCase());
   const showCoupAiError = Boolean(nameTrimmed) && Boolean(coupAiIssue);
   const canAct = Boolean(selected) && coupAiOk && !busy;
   const localReady =
@@ -2136,28 +2193,52 @@ function renderSubmitModal() {
     report.ready === true &&
     report.name_ok !== false &&
     report.safe !== false;
-  const canSubmit = canAct && hubReady && localReady && fullNameOk;
-  const submitTitle = !hubReady
-    ? "Hub is offline — check hub status first"
-    : !fullNameOk
-      ? fullNameIssue || "Enter your full name"
-      : !coupAiOk
-        ? coupAiIssue || "Name your Coup AI"
-        : localReady
-          ? "Upload to coup-master"
-          : "Run Test locally and get READY first";
+  const canSubmit =
+    canAct && hubReady && localReady && fullNameOk && !dupReason;
+  const submitTitle = dupReason
+    ? dupReason
+    : !hubReady
+      ? "Hub is offline — check hub status first"
+      : !fullNameOk
+        ? fullNameIssue || "Enter your full name"
+        : !coupAiOk
+          ? coupAiIssue || "Name your Coup AI"
+          : localReady
+            ? onHubAlready
+              ? `Replace existing hub agent "${nameTrimmed}"`
+              : "Upload to coup-master"
+            : "Run Test locally and get READY first";
+  const submitLabel = s.busy === "submit"
+    ? "Submitting…"
+    : dupReason
+      ? "Already submitted"
+      : onHubAlready && localReady
+        ? "Replace on hub"
+        : "Submit to hub";
   const fullNameHint = fullNameIssue
     ? `<p class="field-error">${escapeHtml(fullNameIssue)}</p>`
     : `<p class="muted field-hint">First and last name, as you'd write it on a form</p>`;
-  const coupAiHint = showCoupAiError
-    ? `<p class="field-error">${escapeHtml(coupAiIssue)}</p>`
-    : `<p class="muted field-hint">Public handle on the hub — letters, numbers, _ and - only</p>`;
+  let coupAiHint;
+  if (showCoupAiError) {
+    coupAiHint = `<p class="field-error">${escapeHtml(coupAiIssue)}</p>`;
+  } else if (dupReason && !s.success) {
+    coupAiHint = `<p class="field-error">${escapeHtml(dupReason)}</p>`;
+  } else if (onHubAlready) {
+    coupAiHint = `<p class="muted field-hint">"${escapeHtml(
+      nameTrimmed
+    )}" is already on the hub — submit will replace it</p>`;
+  } else {
+    coupAiHint = `<p class="muted field-hint">Public handle on the hub — letters, numbers, _ and - only</p>`;
+  }
 
   let statusHtml = "";
   if (s.error) {
     statusHtml = `<div class="session-error">${escapeHtml(s.error)}</div>`;
   } else if (s.success) {
-    statusHtml = `<div class="submit-success">${escapeHtml(s.success)}</div>`;
+    statusHtml = `<div class="submit-success">
+      <div>${escapeHtml(s.success)}</div>
+      <p class="muted field-hint submit-success-hint">Submit is locked for this Coup AI name. Pick another local agent or a new name to upload again.</p>
+    </div>`;
   }
   if (report && !s.success) {
     const ready = report.ready && report.name_ok !== false;
@@ -2211,7 +2292,7 @@ function renderSubmitModal() {
             <label for="submit-name">Name of your Coup AI</label>
             <input id="submit-name" type="text" autocomplete="off" spellcheck="false"
               placeholder="milo_bot" value="${escapeAttr(s.name || "")}" ${busy ? "disabled" : ""}
-              aria-invalid="${showCoupAiError ? "true" : "false"}">
+              aria-invalid="${showCoupAiError || (dupReason && !s.success) ? "true" : "false"}">
             ${coupAiHint}
           </div>
           ${statusHtml}
@@ -2221,8 +2302,8 @@ function renderSubmitModal() {
             </button>
             <button class="btn primary" type="button" id="confirm-submit-agent" ${
               canSubmit ? "" : "disabled"
-            } title="${escapeAttr(submitTitle)}">
-              ${s.busy === "submit" ? "Submitting…" : "Submit to hub"}
+            } title="${escapeAttr(submitTitle)}" aria-disabled="${canSubmit ? "false" : "true"}">
+              ${escapeHtml(submitLabel)}
             </button>
           </div>
         </div>
@@ -2408,6 +2489,12 @@ async function runSubmitUpload() {
     render();
     return;
   }
+  const dupReason = duplicateSubmitReason(name, agent);
+  if (dupReason) {
+    state.submit.error = dupReason;
+    render();
+    return;
+  }
   const personIssue = fullNameError(fullName);
   if (personIssue) {
     state.submit.error = personIssue;
@@ -2448,14 +2535,22 @@ async function runSubmitUpload() {
       }),
     });
     const who = meta.full_name || meta.uploader || fullName;
-    state.submit.success = `Uploaded ${meta.name} as ${who} (${meta.size_bytes} bytes).`;
+    const uploaded = String(meta.name || name).trim();
+    state.submit.success = `Uploaded ${uploaded} as ${who} (${meta.size_bytes} bytes).`;
+    state.submit.lastUpload = { agent, name: uploaded };
+    const key = uploaded.toLowerCase();
+    if (!state.submit.uploadedNames.includes(key)) {
+      state.submit.uploadedNames = [...state.submit.uploadedNames, key];
+    }
     state.submit.report = {
       ready: true,
       name_ok: true,
       safe: true,
       issues: [],
-      text: `READY\nuploaded ${meta.name}\nfull name ${who}\nsha256 ${meta.sha256}`,
+      text: `READY\nuploaded ${uploaded}\nfull name ${who}\nsha256 ${meta.sha256}`,
     };
+    // Refresh arena catalog so the name shows as taken immediately.
+    await loadAgents({ quiet: true });
   } catch (err) {
     state.submit.error = err.message;
   } finally {

@@ -1,4 +1,4 @@
-"""Locate example agents, local scratch agents, and arena (hub/disk) submissions."""
+"""Locate example agents, local scratch agents, and on-disk submission cache."""
 
 from __future__ import annotations
 
@@ -15,8 +15,9 @@ EXAMPLES = {
 LOCAL = ROOT / "agents" / "local"
 SUBMISSIONS = ROOT / "agents" / "submissions"
 
-# Arena (hub / agents/submissions) ids are namespaced so they never collide with
-# local folder names or example aliases. Display name is still the bare hub name.
+# Arena (hub) ids are namespaced so they never collide with local folder names
+# or example aliases. Display name is still the bare hub name. Disk under
+# agents/submissions/ is only a download/cache for running — not a catalog source.
 ARENA_PREFIX = "arena:"
 
 
@@ -100,7 +101,11 @@ def _catalog_path(path: Path) -> str:
 
 
 def list_available_agents() -> list[dict[str, str]]:
-    """Agents the dashboard can pick: examples, local folder, then arena submissions."""
+    """Agents discoverable from disk: examples and local only.
+
+    Arena / hub entries are merged by the dashboard from coup-master, not from
+    ``agents/submissions/``.
+    """
 
     agents: list[dict[str, str]] = []
     for alias, path in EXAMPLES.items():
@@ -120,16 +125,6 @@ def list_available_agents() -> list[dict[str, str]]:
                 "id": path.parent.name,
                 "name": path.parent.name,
                 "kind": "local",
-                "path": _catalog_path(path),
-            }
-        )
-    for path in submission_agents():
-        name = path.parent.name
-        agents.append(
-            {
-                "id": arena_agent_id(name),
-                "name": name,
-                "kind": "submission",
                 "path": _catalog_path(path),
             }
         )
