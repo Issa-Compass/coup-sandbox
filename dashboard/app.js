@@ -1234,7 +1234,7 @@ function renderBoardTable(rows) {
     <thead>
       <tr>
         <th>Rank</th><th>Agent</th><th>Games</th><th>Points</th><th>Avg</th>
-        <th>Wins</th><th>Win%</th><th>Illegal</th><th>Errors</th><th>Timeouts</th><th>Avg ms</th>
+        <th>Wins</th><th>Win%</th><th>Errors</th><th>Avg ms</th>
       </tr>
     </thead>
     <tbody>${rows.map((row, index) => scoreRow(row, index + 1)).join("")}</tbody>
@@ -1243,6 +1243,7 @@ function renderBoardTable(rows) {
 
 function scoreRow(row, rank) {
   const games = row.games || 0;
+  const errors = (row.errors || 0) + (row.timeouts || 0);
   return `<tr>
     <td>${rank}</td>
     <td class="agent-name">${escapeHtml(displayId(row.name))}</td>
@@ -1251,9 +1252,7 @@ function scoreRow(row, rank) {
     <td>${avg(row.points, games)}</td>
     <td>${row.wins}</td>
     <td>${pct(row.wins, games)}</td>
-    <td>${row.illegal}</td>
-    <td>${row.errors}</td>
-    <td>${row.timeouts}</td>
+    <td>${errors}</td>
     <td>${avgMs(row)}</td>
   </tr>`;
 }
