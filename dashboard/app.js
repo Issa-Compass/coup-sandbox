@@ -147,6 +147,7 @@ const state = {
   manualSpeedMs: 1000,
   manualPumpTimer: null,
   manualExchangeKeep: [], // selected cards during exchange prompt
+  followPlay: false, // after Run, open the table and play games through
   hub: null, // { configured, master_url } | null while loading
   hubPing: null, // { status: checking|ready|offline, error?, version? } | null
   submit: defaultSubmit(),
@@ -268,6 +269,7 @@ function coupAiNameError(value) {
 }
 
 let playTimer = null;
+let followTimer = null;
 let liveTimer = null;
 let liveInFlight = false;
 
@@ -350,6 +352,10 @@ async function refreshLive() {
           }
         }
         await loadGames({ quiet: true });
+        if (armFollowPlay()) {
+          syncLivePolling();
+          return;
+        }
       } else if (state.view === "scoreboard") {
         await loadRuns({ quiet: true });
         await loadScoreboard({ quiet: true });
@@ -397,8 +403,12 @@ function parseHash() {
 
 async function route() {
   stopPlaybackTimer();
+  stopFollowTimer();
   stopManualPump();
   const next = parseHash();
+  // Leaving the table (scoreboard, games list, manual) stops the auto play-through.
+  // Moving from the waiting games list onto a game does not.
+  if (state.view === "play" && next.view !== "play") state.followPlay = false;
   state.view = next.view;
   if (next.runId) state.runId = next.runId;
   if (!state.runId && state.runs.length) state.runId = state.runs[0].id;
@@ -408,6 +418,9 @@ async function route() {
   } else if (next.view === "games") {
     state.round = next.round;
     await loadGames();
+    // A fast round is already on disk by the time this list opens. Go to the
+    // table instead of leaving the finished games sitting under the scoreboard.
+    if (armFollowPlay()) return;
   } else if (next.view === "play") {
     state.round = next.round;
     await loadPlayback(next.gameId);
@@ -532,16 +545,86 @@ async function loadPlayback(gameId) {
   const result = lines.find((row) => row.type === "result") || null;
   const events = lines.filter((row) => row.type === "event");
   const hasHands = events.some((row) => row.state?.players?.some((p) => Array.isArray(p.hand)));
+  const previousSpeed = state.playback?.speedMs;
+  const followThrough = Boolean(state.followPlay);
+  // The log endpoint returns the file as stored. A listed game can be a header
+  // with no events, or a single frame. Stepping needs a later event; shorter
+  // logs still have to hand follow-play to the next game.
+  const canStep = events.length > 1;
   state.playback = {
     header,
     result,
     events,
     index: 0,
-    playing: false,
-    speedMs: 1000,
+    playing: followThrough && canStep,
+    speedMs: previousSpeed || (state.followPlay ? 500 : 1000),
     reveal: false,
     hasHands,
   };
+  if (followThrough && !canStep) scheduleFollowNext();
+}
+
+function playHash(gameId) {
+  return `#/play/${encodeURIComponent(state.runId)}/${state.round}/${encodeURIComponent(gameId)}`;
+}
+
+/** Jump onto the first table and play it. Stay put if this round is already on screen. */
+function armFollowPlay() {
+  if (!state.followPlay) return false;
+  if (!state.runId || !state.round || !state.games.length) return false;
+  const watching = state.playback?.header?.id;
+  if (state.view === "play" && watching && state.games.some((game) => game.id === watching)) {
+    return false;
+  }
+  const hash = playHash(state.games[0].id);
+  if (location.hash === hash) return false;
+  location.hash = hash;
+  return true;
+}
+
+function stopFollowTimer() {
+  if (followTimer == null) return;
+  clearTimeout(followTimer);
+  followTimer = null;
+}
+
+function scheduleFollowNext() {
+  stopFollowTimer();
+  if (!state.followPlay || state.view !== "play") return;
+  followTimer = setTimeout(() => {
+    followTimer = null;
+    followNextGame();
+  }, 700);
+}
+
+async function followNextGame() {
+  if (!state.followPlay || state.view !== "play") return;
+  const runId = state.runId;
+  const round = state.round;
+  const gameId = state.playback?.header?.id ?? null;
+  if (!runId || round == null || !gameId) return;
+  await loadGames({ quiet: true });
+  const samePlayback =
+    state.followPlay &&
+    state.view === "play" &&
+    state.runId === runId &&
+    state.round === round &&
+    (state.playback?.header?.id ?? null) === gameId;
+  if (!samePlayback) return;
+  const ids = state.games.map((game) => game.id);
+  const at = ids.indexOf(gameId);
+  const next = at >= 0 ? ids[at + 1] : null;
+  if (next) {
+    const hash = playHash(next);
+    if (location.hash !== hash) location.hash = hash;
+    return;
+  }
+  if (sessionIsLive() && state.session?.run_id === state.runId) {
+    followTimer = setTimeout(() => {
+      followTimer = null;
+      followNextGame();
+    }, 400);
+  }
 }
 
 async function fetchJson(url, options) {
@@ -1289,7 +1372,9 @@ function renderPlayback() {
         <div class="play-title">
           <div class="play-title-row">
             <h1 class="game-id">${escapeHtml(displayId(pb.header.id || "Game"))}</h1>
-            ${renderGameWinner(pb.result?.winner)}
+            ${renderGameWinner(
+              pb.events.length && pb.index >= pb.events.length - 1 ? pb.result?.winner : null
+            )}
           </div>
           ${renderPlayerRoster(players, { turnSeat: roles.turn })}
         </div>
@@ -2975,6 +3060,7 @@ async function startSession() {
     force: true,
   };
   try {
+    state.followPlay = true;
     state.session = await fetchJson("/api/session/start", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -2987,22 +3073,24 @@ async function startSession() {
     state.runId = state.session?.run_id || state.runId;
     state.round = state.session?.current_round || roundNumber;
     ensureRunInList(state.runId);
+    await loadGames({ quiet: true });
+    syncLivePolling();
+    if (armFollowPlay()) return;
     const gamesHash = `#/games/${encodeURIComponent(state.runId)}/${state.round}`;
     if (location.hash === gamesHash) {
       state.view = "games";
       await loadRuns({ quiet: true });
-      await loadGames({ quiet: true });
       render();
     } else {
       location.hash = gamesHash;
     }
-    syncLivePolling();
     if (!sessionIsLive()) {
       await loadRuns({ quiet: true });
       await loadGames({ quiet: true });
-      render();
+      if (!armFollowPlay()) render();
     }
   } catch (err) {
+    state.followPlay = false;
     await loadSession({ quiet: true });
     syncLivePolling();
     state.setupError = err.message;
@@ -3019,10 +3107,16 @@ function bindPlayback() {
       if (act === "toggle") {
         pb.playing = !pb.playing;
         if (pb.playing) startPlaybackTimer();
-        else stopPlaybackTimer();
+        else {
+          state.followPlay = false;
+          stopFollowTimer();
+          stopPlaybackTimer();
+        }
         render();
         return;
       }
+      state.followPlay = false;
+      stopFollowTimer();
       pb.playing = false;
       stopPlaybackTimer();
       if (act === "start") pb.index = 0;
@@ -3052,6 +3146,8 @@ function bindPlayback() {
   const scrub = document.getElementById("scrub");
   if (scrub) {
     scrub.addEventListener("input", () => {
+      state.followPlay = false;
+      stopFollowTimer();
       pb.playing = false;
       stopPlaybackTimer();
       pb.index = Number(scrub.value);
@@ -3060,12 +3156,15 @@ function bindPlayback() {
   }
   document.querySelectorAll(".event-item[data-index]").forEach((item) => {
     item.addEventListener("click", () => {
+      state.followPlay = false;
+      stopFollowTimer();
       pb.playing = false;
       stopPlaybackTimer();
       pb.index = Number(item.getAttribute("data-index"));
       render();
     });
   });
+  if (pb.playing && !playTimer) startPlaybackTimer();
   const list = document.getElementById("event-list");
   const current = list?.querySelector(".event-item.current");
   if (current) current.scrollIntoView({ block: "nearest" });
@@ -3081,6 +3180,7 @@ function startPlaybackTimer() {
       state.playback.playing = false;
       stopPlaybackTimer();
       render();
+      scheduleFollowNext();
       return;
     }
     state.playback.index += 1;
