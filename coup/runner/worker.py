@@ -13,7 +13,7 @@ import sys
 import traceback
 from pathlib import Path
 
-from coup.agent_api import Agent
+from coup.agent_api import Agent, StandingsSnapshot, bind_standings
 from coup.serialize import from_data, to_data
 
 _BLOCKED_ROOTS = {"socket", "requests", "urllib", "http", "subprocess", "ctypes"}
@@ -65,12 +65,26 @@ def _reply(stream, payload: dict) -> None:
     stream.flush()
 
 
+def _bind_request_standings(request: dict) -> None:
+    if "standings" not in request:
+        return
+    raw = request["standings"]
+    if raw is None:
+        bind_standings(None)
+        return
+    snapshot = from_data(raw)
+    if snapshot is not None and not isinstance(snapshot, StandingsSnapshot):
+        raise TypeError("standings payload must be a StandingsSnapshot")
+    bind_standings(snapshot)
+
+
 def _dispatch(agent: Agent | None, request: dict) -> tuple[Agent | None, object]:
     method = request["method"]
     if method == "load":
         return _load(Path(request["path"])), None
     if agent is None:
         raise RuntimeError("load an agent before calling it")
+    _bind_request_standings(request)
     view = from_data(request["view"]) if "view" in request else None
     if method == "on_game_start":
         agent.on_game_start(view, int(request["seed"]))

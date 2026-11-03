@@ -82,7 +82,7 @@ Each game gives placement points. In an `n`-player game, 1st place gets `n - 1` 
 
 The leaderboard sorts by average points per game, then win rate, then fewer illegal moves, errors, and timeouts, then name.
 
-Tables are 4, 5, or 6 players when the field can be split that way. A field of 7 is a table of 4 and a table of 3, because everyone plays the same number of games. Seats are shuffled.
+Tables are 4, 5, or 6 players when the field can be split that way. A field of 7 is a table of 4 and a table of 3, because everyone plays the same number of games. Each wave rebalances seating so agents share tables as evenly as possible (poker-style); seat order at each table is still shuffled.
 
 ## Defaults and the clock
 
@@ -101,6 +101,6 @@ After a timeout the process restarts and `on_game_start` runs again with the ope
 
 Your agent may import `coup.agent_api` and the normal standard library. It may not import `coup.engine`, `coup.runner`, `socket`, `requests`, `urllib`, `http`, `subprocess`, `importlib`, or `ctypes`. It may not call `__import__`.
 
-The seed passed to `on_game_start` is only for your random number generator. It is not the deck seed. Do not try to read the tournament process, the results files, or other people's agents to learn hidden cards. That is a disqualification, not a clever strategy.
+The seed passed to `on_game_start` is only for your random number generator. It is not the deck seed. Public tournament standings are available only through `query_standings` / `query_previous_round_winners` in `coup.agent_api`, and those rows use the same opaque seat UIDs as the table — not real agent names. Do not read the results files, the tournament process, or other people's agents (including to learn hidden cards or real identities). That is a disqualification, not a clever strategy.
 
 Do not print from the agent. Printing does not reach you in a useful way, and enough of it can make you miss the clock.

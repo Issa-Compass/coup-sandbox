@@ -52,12 +52,24 @@ Use `--round 2`, `--round 3`, and so on for later checkpoints. Do not reuse a ro
 
 A round is reproducible from `--seed` for seating, but each deck is shuffled with a secret held in the tournament process. Agents do not receive that secret. Logs written at the end of a game include that game's deck seed so you can debug a finished game. They do not let a later game be predicted.
 
+Each tournament run mints opaque public UIDs (`results/<run-id>/player_uids.json`) and seats those at the table the agents see. Leaderboards and game logs still use real agent names; agents only ever get the UIDs (stable across games and rounds in that run).
+
 ## Reading results
 
 - `results/<run-id>/round_N/leaderboard.html` is the page to put on a screen.
 - `results/<run-id>/standings.html` adds every round in that run.
 - `results/<run-id>/round_N/games/g0001.jsonl` is one game. `python scripts/replay.py <that file>` prints it.
 - Illegal moves, errors, and timeouts are columns. A strong win rate with a large error count is a broken agent that got lucky defaults, not a finished one.
+
+For the live projector dashboard (scoreboard + game playback with speed and reveal):
+
+```powershell
+python scripts/serve_dashboard.py --results results --port 8765
+```
+
+Open `http://127.0.0.1:8765`. **New session** lets you pick agents, add multiple rounds, and play them in the background. Finished games appear under Games while the session is still running — Watch any completed table without waiting for the round to finish. Or pick an existing run, switch Standings / Round tabs, open Games, then Watch. Playback supports 2s / 1s / 0.5s / 0.25s per event. **Reveal cards** shows face-down hands from the log.
+
+Each event line in a new game log includes a `state` object: public coins / influence / revealed cards, plus `hand` (face-down cards) for the reveal toggle. Older logs without `state` still open; reveal stays disabled.
 
 Copy the `results/nov6` folder to Drive at the end. It is gitignored on purpose.
 
@@ -74,6 +86,7 @@ Copy the `results/nov6` folder to Drive at the end. It is gitignored on purpose.
 python scripts/play.py --agents template,random,honest --seed 3 --reveal
 python scripts/replay.py results/nov6/round_1/games/g0001.jsonl
 python scripts/tournament.py --round 1 --agents honest,bluffer,challenger,random --games-per-agent 4 --no-sandbox --run-id demo --force
+python scripts/serve_dashboard.py --port 8765
 ```
 
 `--reveal` prints hidden cards. Use it when a log line is confusing. Do not run the scored round with it. It only affects the local printout, not the log, but it is the wrong habit at the table.

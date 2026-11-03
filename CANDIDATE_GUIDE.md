@@ -29,12 +29,15 @@ If you want Cursor or Claude to write the first version, paste `AI_PROMPT.md` an
 
 `READY` is the minimum. It means you never return an illegal move, throw, or run past 1 second.
 
-The example bots are the ladder:
+The example bots are the ladder (shared foundation + tendency knobs in
+`agents/examples/foundation.py`):
 
-- `random` picks a legal move at random. Beat this first.
+- `random` mostly picks legal moves at random, with survival floors (card-count
+  impossibles, last-life Contessa). Beat this first.
 - `honest` only claims cards it holds, and only challenges claims that are impossible.
-- `bluffer` calls Tax and Assassinate a lot, including when it is lying.
-- `challenger` plays honestly and challenges claims that look unlikely.
+- `bluffer` calls Tax and Assassinate a lot, including when it is lying — but
+  still Coups threats and does not free-die to Assassinate on last influence.
+- `challenger` plays honestly and challenges soft claims (not coin-flip early Tax).
 
 You can read their source. Copying `challenger` and changing one number is allowed and will not win the event by itself.
 
@@ -59,7 +62,11 @@ A decision that takes more than 1 second is thrown away and counts as a timeout.
 
 You can store notes on `self` during a game, and across games in the tournament. The view on each call is complete. You do not need to reconstruct coins from the history, but the history is how you know who has been lying.
 
-Do not print. Do not open files. Do not call an LLM from the agent. The model, if you use one, is for writing the code before the game.
+In a tournament, every seat’s `PublicPlayer.name` (and standings `name`) is an opaque UID that stays fixed for the whole run. You are not told the submission names — guess from play style, and reuse the UID to connect the same opponent across games.
+
+In a tournament round you may optionally call `query_standings(StandingsScope.TABLE|ROUND|TOURNAMENT)` or `query_previous_round_winners()` from `coup.agent_api` to see public placement points so far. Single `play.py` games and the checker leave those as `None`.
+
+Do not print. Do not open `results/` files. Do not call an LLM from the agent. The model, if you use one, is for writing the code before the game.
 
 ## Getting unstuck
 

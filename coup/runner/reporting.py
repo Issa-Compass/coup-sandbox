@@ -8,31 +8,58 @@ from pathlib import Path
 from typing import Any
 
 from coup.agent_api import Event
+from coup.runner.identity import apply_name_map
 from coup.runner.match import PlayedGame
 
 
-def write_game_log(path: Path, played: PlayedGame, seed: int, game_id: str) -> None:
+def write_game_log(
+    path: Path,
+    played: PlayedGame,
+    seed: int,
+    game_id: str,
+    *,
+    public_to_real: dict[str, str] | None = None,
+) -> None:
+    """Write an organizer-facing game log.
+
+    During a tournament the engine seats opaque public IDs. Pass
+    ``public_to_real`` so the log (and dashboard) show real agent names.
+    """
+
+    rename = public_to_real or {}
+
+    def real_name(public: str) -> str:
+        return rename.get(public, public)
+
     lines: list[dict[str, Any]] = [
         {
             "type": "game",
             "id": game_id,
             "seed": seed,
-            "players": [player.name for player in played.game.players],
+            "players": [real_name(player.name) for player in played.game.players],
             "max_turns": played.game.max_turns,
         }
     ]
-    for event in played.game.history:
-        lines.append(_event_line(event))
+    if rename:
+        lines[0]["public_ids"] = [player.name for player in played.game.players]
+    snapshots = played.game.board_snapshots
+    for index, event in enumerate(played.game.history):
+        line = _event_line(event)
+        if rename:
+            line["message"] = apply_name_map(line["message"], rename)
+        if index < len(snapshots):
+            line["state"] = _remap_snapshot(snapshots[index], rename)
+        lines.append(line)
     lines.append(
         {
             "type": "result",
             "turns": played.result.turns,
             "capped": played.result.capped,
-            "winner": played.game.players[played.result.winner].name,
+            "winner": real_name(played.game.players[played.result.winner].name),
             "placements": [
                 {
                     "place": item.place,
-                    "name": item.name,
+                    "name": real_name(item.name),
                     "points": item.points,
                     "influence": item.influence,
                     "coins": item.coins,
@@ -44,6 +71,22 @@ def write_game_log(path: Path, played: PlayedGame, seed: int, game_id: str) -> N
     )
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("".join(json.dumps(line) + "\n" for line in lines), encoding="utf-8")
+
+
+def _remap_snapshot(snapshot: dict[str, Any], public_to_real: dict[str, str]) -> dict[str, Any]:
+    if not public_to_real:
+        return snapshot
+    remapped = dict(snapshot)
+    players = []
+    for player in snapshot.get("players") or []:
+        copy = dict(player)
+        public = copy.get("name")
+        if isinstance(public, str) and public in public_to_real:
+            copy["name"] = public_to_real[public]
+            copy["public_id"] = public
+        players.append(copy)
+    remapped["players"] = players
+    return remapped
 
 
 def write_round_outputs(folder: Path, summary: dict[str, Any]) -> None:

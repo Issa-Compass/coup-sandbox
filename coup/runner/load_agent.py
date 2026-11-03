@@ -33,3 +33,15 @@ def agent_name_from_path(path: Path) -> str:
     if path.name == "agent.py":
         return path.parent.name
     return path.stem
+
+
+def unique_instance_names(names: list[str]) -> list[str]:
+    """Keep the first of each name; suffix later copies ``_2``, ``_3``, …"""
+
+    seen: dict[str, int] = {}
+    out: list[str] = []
+    for name in names:
+        count = seen.get(name, 0) + 1
+        seen[name] = count
+        out.append(name if count == 1 else f"{name}_{count}")
+    return out

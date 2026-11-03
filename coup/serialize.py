@@ -15,10 +15,14 @@ from coup.agent_api import (
     Pass,
     Placement,
     PlayerView,
+    PreviousRoundWinner,
     PublicPlayer,
+    StandingRow,
+    StandingsScope,
+    StandingsSnapshot,
 )
 
-ENUMS = {"Card": Card, "ActionType": ActionType}
+ENUMS = {"Card": Card, "ActionType": ActionType, "StandingsScope": StandingsScope}
 DATACLASSES = {
     "Action": Action,
     "Block": Block,
@@ -29,6 +33,9 @@ DATACLASSES = {
     "PlayerView": PlayerView,
     "Placement": Placement,
     "GameResult": GameResult,
+    "StandingRow": StandingRow,
+    "PreviousRoundWinner": PreviousRoundWinner,
+    "StandingsSnapshot": StandingsSnapshot,
 }
 TUPLE_FIELDS = {
     "revealed",
@@ -39,6 +46,10 @@ TUPLE_FIELDS = {
     "legal_responses",
     "drawn",
     "placements",
+    "table",
+    "round_rows",
+    "tournament_rows",
+    "previous_round_winners",
 }
 
 

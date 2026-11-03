@@ -13,7 +13,10 @@ from coup.agent_api import (
     GameResult,
     Pass,
     PlayerView,
+    StandingsScope,
     default_action,
+    query_previous_round_winners,
+    query_standings,
 )
 ```
 
@@ -95,6 +98,8 @@ The base class already returns legal defaults. Override what you care about.
 
 `PublicPlayer` has `seat`, `name`, `coins`, `influence`, and `revealed`. `influence` is how many face-down cards they have. `revealed` is the cards they have lost, in order. A player is out when `influence` is 0.
 
+In a tournament, `name` is an opaque public UID (`u_` + hex), not the submission folder name. The same UID is reused for that agent across every game and round in the run, so you can track play style without being told who is who. A new tournament run mints new UIDs. Casual `play.py` games still use the agent name.
+
 Always return a value that is equal to one of `legal_actions` or `legal_responses`. A `Block` during the challenge phase is illegal. A `Challenge` during the block phase is illegal. Read `view.phase`.
 
 `respond_to_action` is used for both the challenge phase and the block phase. `respond_to_block` is only "do you challenge this block?".
@@ -124,6 +129,21 @@ Useful `type` values: `start`, `action`, `challenge`, `prove`, `block`, `lose`, 
 ## GameResult
 
 `placements` is a tuple of `Placement` (`seat`, `name`, `place`, `points`, `influence`, `coins`), best place first. `winner` is the seat in 1st. `turns` is how many turns were played. `capped` is true when the turn limit ended the game.
+
+## Tournament standings (optional)
+
+During a tournament round the runner binds a public standings snapshot for the game you are in. You may read it at any decision (including `on_game_start` / `on_game_end`). Outside a tournament (`scripts/play.py`, the readiness checker) these return `None`.
+
+```python
+rows = query_standings(StandingsScope.TABLE)       # this table, current-round stats so far
+rows = query_standings(StandingsScope.ROUND)       # whole round so far
+rows = query_standings(StandingsScope.TOURNAMENT)  # prior rounds + this round so far
+winners = query_previous_round_winners()           # top agent of each finished round
+```
+
+Each `StandingRow` has `rank`, `name`, `games`, `points`, `wins`, `avg_points`, plus fault counters (`illegal`, `errors`, `timeouts`). Rank 1 is best (same sort as the published leaderboard). The game in progress is not counted yet. In a tournament, `name` / `table` use the same public UIDs as `PublicPlayer.name` — never the real agent folder names. Organizer leaderboards still show real names.
+
+`current_standings()` returns the raw `StandingsSnapshot` (`run_id`, `round`, `game_index`, `game_id`, `table`, …) when you need metadata. Do not read `results/` files yourself — use these helpers.
 
 ## Helpers
 

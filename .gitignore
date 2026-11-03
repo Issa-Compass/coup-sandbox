@@ -7,3 +7,7 @@ venv/
 *.egg-info/
 results/*
 !results/.gitkeep
+
+# Local scratch bots (dir is indexed at runtime; keep README only)
+agents/local/**
+!agents/local/README.md

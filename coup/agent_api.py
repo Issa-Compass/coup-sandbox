@@ -6,6 +6,7 @@ The engine calls the methods on ``Agent``. Return the types documented here.
 
 from __future__ import annotations
 
+import contextvars
 from dataclasses import dataclass
 from enum import Enum
 from typing import Union
@@ -107,6 +108,13 @@ Response = Union[Pass, Challenge, Block]
 
 @dataclass(frozen=True)
 class PublicPlayer:
+    """One seat as seen by agents.
+
+    ``name`` is the public table id. In a tournament it is an opaque UID that
+    stays fixed for the run (so you can track a seat across games) but is not
+    the submission folder name. Casual ``play.py`` games use the agent name.
+    """
+
     seat: int
     name: str
     coins: int
@@ -180,6 +188,137 @@ class GameResult:
             if placement.seat == seat:
                 return placement.place
         raise KeyError(seat)
+
+
+class StandingsScope(str, Enum):
+    """Scopes for ``query_standings``.
+
+    - ``TABLE``: agents seated at this game, ranked by current-round stats so far
+    - ``ROUND``: every agent in the current round, stats from finished games only
+    - ``TOURNAMENT``: cumulative across finished prior rounds plus this round so far
+    """
+
+    TABLE = "table"
+    ROUND = "round"
+    TOURNAMENT = "tournament"
+
+
+@dataclass(frozen=True)
+class StandingRow:
+    """One agent on a leaderboard snapshot. Rank 1 is best.
+
+    ``name`` is the same public UID used in ``PublicPlayer.name`` for this run.
+    """
+
+    rank: int
+    name: str
+    games: int
+    points: int
+    wins: int
+    avg_points: float
+    illegal: int = 0
+    errors: int = 0
+    timeouts: int = 0
+
+
+@dataclass(frozen=True)
+class PreviousRoundWinner:
+    """Top agent of a finished round in this tournament run (same sort as the leaderboard).
+
+    ``name`` is that run's public UID, not the submission folder name.
+    """
+
+    round: int
+    name: str
+    games: int
+    points: int
+    wins: int
+    avg_points: float
+
+
+@dataclass(frozen=True)
+class StandingsSnapshot:
+    """Tournament context bound for one game. Prefer ``query_standings`` over reading this.
+
+    ``table`` and every ``name`` field use this run's public UIDs.
+    """
+
+    run_id: str
+    round: int
+    game_index: int
+    game_id: str
+    table: tuple[str, ...]
+    round_rows: tuple[StandingRow, ...]
+    tournament_rows: tuple[StandingRow, ...]
+    previous_round_winners: tuple[PreviousRoundWinner, ...]
+
+
+_STANDINGS: contextvars.ContextVar[StandingsSnapshot | None] = contextvars.ContextVar(
+    "coup_standings",
+    default=None,
+)
+
+
+def bind_standings(snapshot: StandingsSnapshot | None) -> contextvars.Token:
+    """Runner/worker only. Agents should call ``query_standings``, not this."""
+
+    return _STANDINGS.set(snapshot)
+
+
+def reset_standings(token: contextvars.Token) -> None:
+    """Runner/worker only. Pair with ``bind_standings``."""
+
+    _STANDINGS.reset(token)
+
+
+def current_standings() -> StandingsSnapshot | None:
+    """Raw snapshot for this game, or ``None`` outside a tournament round."""
+
+    return _STANDINGS.get()
+
+
+def query_standings(scope: StandingsScope | str = StandingsScope.ROUND) -> tuple[StandingRow, ...] | None:
+    """Optional leaderboard read. Returns ``None`` when not in a tournament round.
+
+    Finished games only — the game you are playing is not included yet.
+    """
+
+    snapshot = _STANDINGS.get()
+    if snapshot is None:
+        return None
+    if isinstance(scope, str):
+        scope = StandingsScope(scope)
+    if scope is StandingsScope.ROUND:
+        return snapshot.round_rows
+    if scope is StandingsScope.TOURNAMENT:
+        return snapshot.tournament_rows
+    if scope is StandingsScope.TABLE:
+        seated = set(snapshot.table)
+        filtered = [row for row in snapshot.round_rows if row.name in seated]
+        return tuple(
+            StandingRow(
+                rank=index,
+                name=row.name,
+                games=row.games,
+                points=row.points,
+                wins=row.wins,
+                avg_points=row.avg_points,
+                illegal=row.illegal,
+                errors=row.errors,
+                timeouts=row.timeouts,
+            )
+            for index, row in enumerate(filtered, start=1)
+        )
+    raise ValueError(f"unknown standings scope: {scope!r}")
+
+
+def query_previous_round_winners() -> tuple[PreviousRoundWinner, ...] | None:
+    """Winners of finished rounds in this run, oldest first. ``None`` outside a tournament."""
+
+    snapshot = _STANDINGS.get()
+    if snapshot is None:
+        return None
+    return snapshot.previous_round_winners
 
 
 def default_action(view: PlayerView) -> Action:

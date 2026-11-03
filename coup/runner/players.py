@@ -24,6 +24,7 @@ from coup.agent_api import (
     Card,
     GameResult,
     PlayerView,
+    current_standings,
     default_action,
     default_exchange,
     default_loss,
@@ -39,6 +40,8 @@ LOAD_TIMEOUT = 10.0
 class Player:
     def __init__(self, name: str, timeout: float):
         self.name = name
+        # What agents see at the table. Tournaments overwrite with an opaque UID.
+        self.public_id = name
         self.timeout = timeout
         self.errors = 0
         self.timeouts = 0
@@ -252,7 +255,7 @@ class SandboxPlayer(Player):
         view, seed = self._start
         status, detail = self._roundtrip(
             "on_game_start",
-            {"view": to_data(view), "seed": seed},
+            {"view": to_data(view), "seed": seed, **_standings_payload()},
             timeout=LOAD_TIMEOUT,
             respawn=False,
         )
@@ -339,6 +342,8 @@ class SandboxPlayer(Player):
                 return "error", "agent process is not running"
         request_id = self._next_id
         self._next_id += 1
+        if method != "load" and "standings" not in payload:
+            payload = {**payload, **_standings_payload()}
         message = {"id": request_id, "method": method, **payload}
         try:
             assert self.proc is not None and self.proc.stdin is not None
@@ -411,6 +416,13 @@ def _readline(proc: subprocess.Popen[str], timeout: float) -> str | None:
     if isinstance(item, Exception):
         return ""
     return item
+
+
+def _standings_payload() -> dict[str, Any]:
+    snapshot = current_standings()
+    if snapshot is None:
+        return {"standings": None}
+    return {"standings": to_data(snapshot)}
 
 
 def open_player(path: Path, name: str, sandbox: bool, timeout: float) -> Player:

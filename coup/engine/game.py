@@ -10,6 +10,7 @@ from __future__ import annotations
 import random
 from collections import Counter
 from dataclasses import dataclass
+from typing import Any
 
 from coup.agent_api import (
     ACTION_COST,
@@ -71,6 +72,7 @@ class Game:
         self.deck = deck
         self.held: list[Card] = []
         self.history: list[Event] = []
+        self.board_snapshots: list[dict[str, Any]] = []
         self.current = 0
         self.actor: int | None = None
         self.turns_played = 0
@@ -590,6 +592,41 @@ class Game:
             index = (index + 1) % count
         return seats
 
+    def board_snapshot(self) -> dict[str, Any]:
+        """Public board plus face-down hands for organizer game logs."""
+
+        pending_action = None
+        if self.pending_action is not None:
+            pending_action = {
+                "type": self.pending_action.type.value,
+                "target": self.pending_action.target,
+            }
+        pending_block = None
+        if self.pending_block is not None:
+            pending_block = {
+                "card": self.pending_block.card.value,
+                "seat": self.pending_block.seat,
+            }
+        return {
+            "players": [
+                {
+                    "seat": player.seat,
+                    "name": player.name,
+                    "coins": player.coins,
+                    "influence": player.influence,
+                    "revealed": [card.value for card in player.revealed],
+                    "hand": [card.value for card in player.cards],
+                }
+                for player in self.players
+            ],
+            "phase": self.phase,
+            "actor": self.actor,
+            "current": self.current,
+            "pending_action": pending_action,
+            "pending_block": pending_block,
+            "deck_count": len(self.deck),
+        }
+
     def _event(self, event_type: str, message: str, turn: int | None = None, **data) -> None:
         self.history.append(
             Event(
@@ -599,6 +636,7 @@ class Game:
                 **data,
             )
         )
+        self.board_snapshots.append(self.board_snapshot())
 
     def _start_message(self) -> str:
         names = ", ".join(player.name for player in self.players)

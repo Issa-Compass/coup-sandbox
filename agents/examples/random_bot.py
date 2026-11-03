@@ -1,30 +1,23 @@
-"""Picks uniformly from the legal moves. The easiest baseline to beat."""
+"""Mostly uniform legal moves, with survival floors so it is not free food."""
 
-import random
-
-from coup.agent_api import Action, Agent, Block, Card, PlayerView, Response
+from agents.examples.foundation import FoundationBot, Tendencies
 
 
-class RandomBot(Agent):
-    def __init__(self) -> None:
-        self.rng = random.Random()
-
-    def on_game_start(self, view: PlayerView, seed: int) -> None:
-        self.rng = random.Random(seed)
-
-    def choose_action(self, view: PlayerView) -> Action:
-        return self.rng.choice(list(view.legal_actions))
-
-    def respond_to_action(self, view: PlayerView, action: Action) -> Response:
-        return self.rng.choice(list(view.legal_responses))
-
-    def respond_to_block(self, view: PlayerView, block: Block) -> Response:
-        return self.rng.choice(list(view.legal_responses))
-
-    def choose_card_to_lose(self, view: PlayerView) -> Card:
-        return self.rng.choice(list(view.your_cards))
-
-    def choose_exchange(self, view: PlayerView, drawn: tuple[Card, ...] | list[Card]) -> list[Card]:
-        pool = list(view.your_cards) + list(drawn)
-        self.rng.shuffle(pool)
-        return pool[: len(view.your_cards)]
+class RandomBot(FoundationBot):
+    TENDENCIES = Tendencies(
+        challenge_only_impossible=False,
+        # Floors: impossible challenges + last-life Contessa. Everything else noisy.
+        challenge_p_max=0.05,
+        challenge_noise=0.35,
+        spare_life_for_speculate=True,
+        survival_contessa_bluff=True,
+        bluff_tax=0.25,
+        bluff_assassinate=0.20,
+        bluff_steal=0.20,
+        bluff_exchange=0.20,
+        bluff_block_contessa_at_two=0.30,
+        bluff_block_steal=0.30,
+        bluff_block_duke_fa=0.20,
+        action_noise=0.85,
+        response_noise=0.75,
+    )

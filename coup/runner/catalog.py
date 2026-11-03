@@ -1,4 +1,4 @@
-"""Locate example agents and candidate submissions."""
+"""Locate example agents, local scratch agents, and candidate submissions."""
 
 from __future__ import annotations
 
@@ -12,12 +12,16 @@ EXAMPLES = {
     "bluffer": ROOT / "agents" / "examples" / "bluffer_bot.py",
     "challenger": ROOT / "agents" / "examples" / "challenger_bot.py",
 }
+LOCAL = ROOT / "agents" / "local"
 SUBMISSIONS = ROOT / "agents" / "submissions"
 
 
 def resolve_agent(token: str) -> Path:
     if token in EXAMPLES:
         return EXAMPLES[token]
+    local = LOCAL / token / "agent.py"
+    if local.is_file():
+        return local
     submission = SUBMISSIONS / token / "agent.py"
     if submission.is_file():
         return submission
@@ -30,10 +34,54 @@ def resolve_agent(token: str) -> Path:
     return path
 
 
-def submission_agents() -> list[Path]:
-    if not SUBMISSIONS.is_dir():
+def _folder_agents(root: Path) -> list[Path]:
+    if not root.is_dir():
         return []
-    return sorted(path for path in SUBMISSIONS.glob("*/agent.py") if path.is_file())
+    return sorted(path for path in root.glob("*/agent.py") if path.is_file())
+
+
+def local_agents() -> list[Path]:
+    return _folder_agents(LOCAL)
+
+
+def submission_agents() -> list[Path]:
+    return _folder_agents(SUBMISSIONS)
+
+
+def list_available_agents() -> list[dict[str, str]]:
+    """Agents the dashboard can pick: examples, local folder, then submissions."""
+
+    agents: list[dict[str, str]] = []
+    for alias, path in EXAMPLES.items():
+        if alias == "template" or not path.is_file():
+            continue
+        agents.append(
+            {
+                "id": alias,
+                "name": path.stem,
+                "kind": "example",
+                "path": str(path.relative_to(ROOT)),
+            }
+        )
+    for path in local_agents():
+        agents.append(
+            {
+                "id": path.parent.name,
+                "name": path.parent.name,
+                "kind": "local",
+                "path": str(path.relative_to(ROOT)),
+            }
+        )
+    for path in submission_agents():
+        agents.append(
+            {
+                "id": path.parent.name,
+                "name": path.parent.name,
+                "kind": "submission",
+                "path": str(path.relative_to(ROOT)),
+            }
+        )
+    return agents
 
 
 def safe_branch_name(branch: str) -> str | None:
