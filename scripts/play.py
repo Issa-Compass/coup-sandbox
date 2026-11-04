@@ -25,8 +25,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Play one Coup game.")
     parser.add_argument(
         "--agents",
-        default="random,honest,knife,turtle,greedy",
-        help="Comma-separated aliases (random, honest, knife, turtle, greedy, bluffer, challenger, template) or file paths.",
+        default="random,honest,guard,turtle,greedy",
+        help="Comma-separated aliases (random, honest, guard, turtle, greedy, bluffer, challenger, template) or file paths.",
     )
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--max-turns", type=int, default=200)

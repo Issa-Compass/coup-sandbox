@@ -101,7 +101,7 @@ Archive the `results/<run-id>` folder when you are done. It is gitignored on pur
 python scripts/play.py --agents template,random,honest --seed 3 --reveal
 python scripts/replay.py results/tournament/round_1/games/g0001.jsonl
 python scripts/collect_submissions.py --force
-python scripts/tournament.py --round 1 --agents honest,knife,turtle,greedy,random --games-per-agent 4 --no-sandbox --run-id demo --force
+python scripts/tournament.py --round 1 --agents honest,guard,turtle,greedy,random --games-per-agent 4 --no-sandbox --run-id demo --force
 python scripts/serve_dashboard.py --port 8765
 ```
 

@@ -24,7 +24,7 @@ RESERVED_NAMES = {
     "honest",
     "bluffer",
     "challenger",
-    "knife",
+    "guard",
     "turtle",
     "greedy",
     "master",

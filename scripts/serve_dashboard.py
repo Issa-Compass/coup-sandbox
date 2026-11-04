@@ -788,7 +788,7 @@ def _idle_session() -> dict[str, Any]:
 def _agents_with_hub(hub_base: str) -> list[dict[str, str]]:
     """Examples + local + arena from coup-master only (not agents/submissions/).
 
-    Namespaces are independent: local ``milo``, base ``knife``, and hub ``milo``
+    Namespaces are independent: local ``milo``, base ``guard``, and hub ``milo``
     can share a display name. Colliding local vs base uses ``local:<name>``;
     arena always uses ``arena:<name>``. Disk under ``agents/submissions/`` is a
     run-time cache after download — it does not populate The Arena catalog.
