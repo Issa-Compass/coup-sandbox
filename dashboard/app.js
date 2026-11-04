@@ -131,6 +131,7 @@ const state = {
   standings: null,
   roundSummaries: {},
   runRounds: [],
+  runAgents: [], // catalog tokens from results/<run>/roster.json
   games: [],
   playback: null,
   agents: [],
@@ -520,6 +521,7 @@ async function loadAgents({ quiet = false } = {}) {
         agent.kind === "example" || agent.kind === "local" || agent.kind === "submission"
     );
     const byId = new Map(DEFAULT_AGENTS.map((agent) => [agent.id, { ...agent }]));
+    // Local that reuses a base alias arrives as local:<name> — distinct from example id.
     for (const agent of fromApi) byId.set(agent.id, agent);
     // Keep the four examples first, then local + submissions.
     const examples = DEFAULT_AGENTS.map((agent) => byId.get(agent.id)).filter(Boolean);
@@ -544,6 +546,7 @@ async function loadScoreboard({ quiet = false } = {}) {
     state.standings = null;
     state.roundSummaries = {};
     state.runRounds = [];
+    state.runAgents = [];
     return;
   }
   // Fresh empty draft is not on disk yet — skip 404 round-trips.
@@ -551,15 +554,19 @@ async function loadScoreboard({ quiet = false } = {}) {
     state.standings = null;
     state.roundSummaries = {};
     state.runRounds = [];
+    state.runAgents = [];
     return;
   }
   try {
     let rounds = [];
+    let roster = [];
     try {
       const meta = await fetchJson(`/api/runs/${encodeURIComponent(state.runId)}`);
       rounds = meta.rounds || [];
+      roster = Array.isArray(meta.agents) ? meta.agents.filter((id) => typeof id === "string" && id) : [];
     } catch {
       rounds = [];
+      roster = [];
     }
     if (state.session?.status === "running" && state.session.run_id === state.runId) {
       for (const round of state.session.rounds || []) {
@@ -571,6 +578,9 @@ async function loadScoreboard({ quiet = false } = {}) {
     }
     rounds = [...new Set(rounds)].sort((a, b) => a - b);
     state.runRounds = rounds;
+    state.runAgents = roster;
+    const run = currentRun();
+    if (run) run.agents = [...roster];
 
     try {
       state.standings = await fetchJson(`/api/runs/${encodeURIComponent(state.runId)}/standings`);
@@ -596,6 +606,7 @@ async function loadScoreboard({ quiet = false } = {}) {
     state.standings = null;
     state.roundSummaries = {};
     state.runRounds = [];
+    state.runAgents = [];
   }
 }
 
@@ -1006,18 +1017,27 @@ function displayId(value) {
   return String(value || "").toLowerCase();
 }
 
+function stripCatalogPrefix(value) {
+  const raw = String(value || "");
+  if (raw.startsWith("arena:")) return raw.slice("arena:".length);
+  if (raw.startsWith("local:")) return raw.slice("local:".length);
+  return raw;
+}
+
 function agentDisplayName(agent) {
   if (!agent) return "";
   // Base set: short id (challenger), not the *_bot file stem.
   if (isStandardAgent(agent)) {
     return displayId(agent.id || String(agent.name || "").replace(/_bot$/i, ""));
   }
-  // Arena: bare hub name — never the arena: catalog id.
-  if (agent.kind === "submission") {
-    const raw = String(agent.name || agent.id || "");
-    return displayId(raw.startsWith("arena:") ? raw.slice("arena:".length) : raw);
-  }
-  return displayId(agent.name || agent.id || "");
+  // Local / arena: bare folder or hub name — never the local:/arena: catalog id.
+  return displayId(stripCatalogPrefix(agent.name || agent.id || ""));
+}
+
+function agentFolderName(agent) {
+  if (!agent) return "";
+  if (agent.name) return String(agent.name);
+  return stripCatalogPrefix(agent.id || "");
 }
 
 function agentKindLabel(agent) {
@@ -2357,7 +2377,8 @@ function renderSubmitModal() {
         .map((agent) => {
           const active = agent.id === selected ? "active" : "";
           const label = agentDisplayName(agent);
-          const onHub = taken.has(String(agent.id || "").toLowerCase());
+          const folder = agentFolderName(agent);
+          const onHub = taken.has(folder.toLowerCase());
           const kind = onHub ? "on hub" : "local";
           const kindClass = onHub ? "agent-kind on-hub" : "agent-kind";
           return `<button class="agent-pick submit-pick ${active}${
@@ -2547,7 +2568,7 @@ async function openSubmitModal() {
   const local = localAgents();
   if (!state.submit.agent && local.length) {
     state.submit.agent = local[0].id;
-    if (!state.submit.name) state.submit.name = local[0].id;
+    if (!state.submit.name) state.submit.name = agentFolderName(local[0]);
   }
   state.hubPing = { status: "checking", error: null, version: null };
   render();
@@ -2600,9 +2621,12 @@ function bindSubmitModal() {
       if (state.submit.busy) return;
       const id = btn.getAttribute("data-submit-agent");
       const prev = state.submit.agent;
+      const prevFolder = agentFolderName(agentById(prev));
+      const next = agentById(id);
       state.submit.agent = id;
-      if (!state.submit.name || state.submit.name === prev) {
-        state.submit.name = id;
+      // Coup AI hub name is the bare folder name, not local:/arena: catalog ids.
+      if (!state.submit.name || state.submit.name === prev || state.submit.name === prevFolder) {
+        state.submit.name = agentFolderName(next) || id;
       }
       state.submit.report = null;
       state.submit.error = null;
@@ -2824,8 +2848,26 @@ function flashCopy(key) {
   }, 1400);
 }
 
+function catalogIdForSeatName(name) {
+  if (typeof name !== "string" || !name) return null;
+  const agents = availableAgents();
+  const arenaId = `arena:${name}`;
+  if (agents.some((agent) => agent.id === arenaId)) return arenaId;
+  if (agents.some((agent) => agent.id === name)) return name;
+  return null;
+}
+
 function hydrateSetupAgentsFromRun() {
-  if (state.setup.agents.length >= 2) return;
+  // Always rebuild for the current run — never keep a sticky draft from another tournament.
+  const run = currentRun();
+  const fromRoster = (
+    (Array.isArray(state.runAgents) && state.runAgents.length ? state.runAgents : null) ||
+    (Array.isArray(run?.agents) ? run.agents : [])
+  ).filter((id) => typeof id === "string" && id);
+  if (fromRoster.length >= 2) {
+    state.setup.agents = [...fromRoster];
+    return;
+  }
   const fromSession =
     state.session?.run_id === state.runId && Array.isArray(state.session?.agents)
       ? state.session.agents.filter((id) => typeof id === "string" && id)
@@ -2835,10 +2877,12 @@ function hydrateSetupAgentsFromRun() {
     return;
   }
   const fromStandings = (state.standings?.agents || [])
-    .map((row) => row?.name)
+    .map((row) => catalogIdForSeatName(row?.name))
     .filter((id) => typeof id === "string" && id);
   if (fromStandings.length >= 2) {
     state.setup.agents = [...fromStandings];
+  } else {
+    state.setup.agents = [];
   }
 }
 
@@ -2881,16 +2925,22 @@ function tournamentDraftPending() {
 }
 
 async function openRoundSetup() {
-  await loadSession({ quiet: true });
+  // Set mode before loadScoreboard so a leftover New Tournament draft does not
+  // short-circuit roster/standings fetch for this run.
+  state.setupMode = "round";
+  await Promise.all([
+    loadSession({ quiet: true }),
+    loadAgents({ quiet: true }),
+    loadScoreboard({ quiet: true }),
+  ]);
   syncLivePolling();
   hydrateSetupAgentsFromRun();
   if (state.setup.agents.length < 2) {
     await openTournamentSetup();
-    state.setupError = "Pick agents for a new tournament first.";
+    state.setupError = "Couldn't restore this run's agents — pick agents for a new tournament.";
     render();
     return;
   }
-  state.setupMode = "round";
   state.setupOpen = true;
   closeSetupMenu();
   state.setupError = null;
@@ -2904,6 +2954,7 @@ function startNewTournament() {
   state.standings = null;
   state.roundSummaries = {};
   state.runRounds = [];
+  state.runAgents = [];
   state.setup.agents = [];
   openTournamentSetup();
   const hash = `#/run/${encodeURIComponent(id)}/standings`;
@@ -3242,7 +3293,10 @@ async function startSession() {
     state.setupStarting = false;
     state.runId = state.session?.run_id || state.runId;
     state.round = state.session?.current_round || roundNumber;
+    state.runAgents = [...payload.agents];
     ensureRunInList(state.runId);
+    const run = currentRun();
+    if (run) run.agents = [...payload.agents];
     await loadGames({ quiet: true });
     syncLivePolling();
     if (armFollowPlay()) return;

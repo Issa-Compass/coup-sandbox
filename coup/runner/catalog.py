@@ -18,18 +18,27 @@ EXAMPLES = {
 LOCAL = ROOT / "agents" / "local"
 SUBMISSIONS = ROOT / "agents" / "submissions"
 
-# Arena (hub) ids are namespaced so they never collide with local folder names
-# or example aliases. Display name is still the bare hub name. Disk under
+# Namespaced catalog ids so local / base / arena never share an id when the
+# folder or hub name matches. Display name is still the bare name. Disk under
 # agents/submissions/ is only a download/cache for running — not a catalog source.
 ARENA_PREFIX = "arena:"
+LOCAL_PREFIX = "local:"
 
 
 def arena_agent_id(name: str) -> str:
     return f"{ARENA_PREFIX}{name}"
 
 
+def local_agent_id(name: str) -> str:
+    return f"{LOCAL_PREFIX}{name}"
+
+
 def is_arena_id(token: str) -> bool:
     return token.startswith(ARENA_PREFIX) and len(token) > len(ARENA_PREFIX)
+
+
+def is_local_id(token: str) -> bool:
+    return token.startswith(LOCAL_PREFIX) and len(token) > len(LOCAL_PREFIX)
 
 
 def arena_name(token: str) -> str | None:
@@ -40,17 +49,37 @@ def arena_name(token: str) -> str | None:
     return token[len(ARENA_PREFIX) :]
 
 
-def display_name_for_token(token: str) -> str:
-    """Seat / standings label: bare name for arena ids, otherwise the token."""
+def local_name(token: str) -> str | None:
+    """Bare local folder name from ``local:<name>``, or None if not a local id."""
 
-    name = arena_name(token)
-    return name if name is not None else token
+    if not is_local_id(token):
+        return None
+    return token[len(LOCAL_PREFIX) :]
+
+
+def catalog_local_id(folder_name: str) -> str:
+    """Catalog id for a local folder: ``local:<name>`` when it reuses a base alias."""
+
+    if folder_name in EXAMPLES:
+        return local_agent_id(folder_name)
+    return folder_name
+
+
+def display_name_for_token(token: str) -> str:
+    """Seat / standings label: bare name for local:/arena: ids, otherwise the token."""
+
+    for extract in (arena_name, local_name):
+        name = extract(token)
+        if name is not None:
+            return name
+    return token
 
 
 def resolve_agent(token: str) -> Path:
     """Resolve a catalog token to an on-disk ``agent.py``.
 
     - ``arena:<name>`` → ``agents/submissions/<name>/`` only (never local).
+    - ``local:<name>`` → ``agents/local/<name>/`` only (never example / submissions).
     - bare token → examples, then ``agents/local/``, then ``agents/submissions/``,
       then a filesystem path.
     """
@@ -63,6 +92,16 @@ def resolve_agent(token: str) -> Path:
         raise FileNotFoundError(
             f"no arena agent {arena!r} under agents/submissions/ "
             "(download from the hub or pick a local agent)"
+        )
+
+    local_token = local_name(token)
+    if local_token is not None:
+        local = LOCAL / local_token / "agent.py"
+        if local.is_file():
+            return local
+        raise FileNotFoundError(
+            f"no local agent {local_token!r} under agents/local/ "
+            "(create agents/local/<name>/agent.py)"
         )
 
     if token in EXAMPLES:
@@ -106,8 +145,10 @@ def _catalog_path(path: Path) -> str:
 def list_available_agents() -> list[dict[str, str]]:
     """Agents discoverable from disk: examples and local only.
 
-    Arena / hub entries are merged by the dashboard from coup-master, not from
-    ``agents/submissions/``.
+    A local folder that reuses a base-set / example alias stays in the catalog
+    as ``local:<name>`` so both bots are selectable (unique ids, same display
+    name). Arena / hub entries are merged by the dashboard from coup-master,
+    not from ``agents/submissions/``.
     """
 
     agents: list[dict[str, str]] = []
@@ -123,10 +164,11 @@ def list_available_agents() -> list[dict[str, str]]:
             }
         )
     for path in local_agents():
+        name = path.parent.name
         agents.append(
             {
-                "id": path.parent.name,
-                "name": path.parent.name,
+                "id": catalog_local_id(name),
+                "name": name,
                 "kind": "local",
                 "path": _catalog_path(path),
             }

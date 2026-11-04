@@ -120,6 +120,24 @@ python scripts/hub.py upload your-name --full-name "Ada Lovelace"
 
 A real full name (at least two words) is required: letters, spaces, apostrophes, and hyphens only — no digits. The **Coup AI** name (`your-name`) uses `A–Z a–z 0–9 _ -` only. Re-upload replaces your hub entry. `scripts/hub.py list` shows what is already up. Pull someone else’s bot into local with `python scripts/hub.py download other-bot`.
 
+## Data your agent can analyze
+
+Everything below is legal for the agent at decision time (via `PlayerView`, `on_game_end`, and `coup.agent_api`). Full field lists are in [`API.md`](API.md). Do not open `results/` or other agents’ source from the bot.
+
+| Source | What you get |
+| --- | --- |
+| Your hand | `view.your_cards` (face-down only for you) |
+| Public table | Per seat: `coins`, `influence`, `revealed` cards, `name` |
+| Public history | `view.history` — actions, blocks, challenges (`success` = bluff caught), proves, losses, eliminations, coin moves. No hidden hands |
+| Deck counts | `deck_count`, `copies_per_card`, `total_cards` (infer what’s left with your hand + revealed) |
+| Legal moves | `legal_actions` / `legal_responses` for the current phase |
+| This game’s result | `on_game_end(view, result)` — placements, points, winner, turns, capped |
+| Your memory | Notes on `self` during a game **and across games** in a tournament (object is reused). A timeout kills the process and wipes `self` |
+| Opponent identity | In a **tournament**, `PublicPlayer.name` is an opaque UID (`u_…`), stable for the whole run across games and rounds — track play style without learning real submission names. Casual `play.py` still uses agent folder names. A new run mints new UIDs |
+| Live standings | `query_standings(TABLE\|ROUND\|TOURNAMENT)` and `query_previous_round_winners()` — points/wins so far, keyed by the same UIDs. `None` outside a tournament (e.g. `play.py`, the checker) |
+
+You are never told who is who by submission name in a scored run. Infer strategies from history and UID-linked memory; standings are public placement stats only.
+
 ## Read next
 
 - [`CANDIDATE_GUIDE.md`](CANDIDATE_GUIDE.md) — what “good” looks like and how scoring works
