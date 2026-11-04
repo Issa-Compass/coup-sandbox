@@ -6,7 +6,7 @@ Replace `YOUR-NAME` with the folder name you were given. Then let the tool edit 
 
 You are writing a Coup bot for this sandbox. Work only in this repository.
 
-Edit only `agents/local/YOUR-NAME/agent.py` while iterating (gitignored). For the scored file, use `agents/submissions/YOUR-NAME/agent.py` (also gitignored — do not commit either or open a PR). Create the file by copying `agents/template/agent.py` if it does not exist. Do not modify anything under `coup/`, `tests/`, `scripts/`, or `agents/examples/`. When a coup-master `.env` is in the repo root, submit with `python scripts/hub.py upload YOUR-NAME --full-name "…"` from the submissions copy.
+Edit only `agents/local/YOUR-NAME/agent.py` while iterating (gitignored). For the scored file, use `agents/submissions/YOUR-NAME/agent.py` (also gitignored — do not commit either or open a PR). Create the file by copying `agents/template/agent.py` if it does not exist. Do not modify anything under `coup/`, `tests/`, `scripts/`, or `agents/examples/`. When a coup-master `.env` is in the repo root, submit with `python scripts/hub.py upload YOUR-NAME --full-name "…"` from the submissions copy (or the dashboard Submit modal). Re-upload with the same player uid replaces your hub entry.
 
 Read `RULES.md` and `API.md` before you write the policy. The engine in `coup/engine/` is the referee. Do not import it. Your file may import from `coup.agent_api` and the Python standard library. It must not import `socket`, `requests`, `urllib`, `http`, `subprocess`, `importlib`, `ctypes`, or `coup.engine`. It must not print.
 

@@ -36,6 +36,7 @@ from coup.hub_client import (  # noqa: E402
     ping_hub,
     upload_agent,
     validate_full_name,
+    validate_player_uid,
     validate_local_name,
 )
 from coup.runner.catalog import (  # noqa: E402
@@ -631,12 +632,22 @@ def make_handler(
             full_name = body.get("full_name", body.get("uploader"))
             if full_name is not None and not isinstance(full_name, str):
                 raise ValueError("full_name must be a string")
+            player_uid = body.get("player_uid")
+            if player_uid is not None and not isinstance(player_uid, str):
+                raise ValueError("player_uid must be a string")
             try:
                 validate_full_name(full_name)
+                validate_player_uid(player_uid)
             except HubError as exc:
                 raise ValueError(str(exc)) from exc
             try:
-                meta = upload_agent(name, path, base_url=base, full_name=full_name)
+                meta = upload_agent(
+                    name,
+                    path,
+                    base_url=base,
+                    full_name=full_name,
+                    player_uid=player_uid,
+                )
             except HubError as exc:
                 self._json(exc.status or 502, {"error": str(exc), "issues": exc.issues})
                 return
@@ -649,6 +660,7 @@ def make_handler(
                     "uploaded_at": meta.uploaded_at,
                     "uploader": meta.uploader,
                     "full_name": meta.full_name,
+                    "player_uid": meta.player_uid,
                 },
             )
 

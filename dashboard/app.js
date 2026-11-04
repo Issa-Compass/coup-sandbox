@@ -159,20 +159,79 @@ const state = {
   submit: defaultSubmit(),
 };
 
+const PLAYER_STORE = {
+  uid: "coupSandbox.playerUid",
+  name: "coupSandbox.coupAiName",
+  fullName: "coupSandbox.fullName",
+  submitted: "coupSandbox.submitted",
+};
+
 function defaultSubmit() {
   return {
     agent: null,
     name: "",
     fullName: "",
+    playerUid: "",
     busy: null, // "test" | "submit" | null
     report: null,
     error: null,
     success: null,
-    /** Hub names uploaded this browser session (lowercase). */
-    uploadedNames: [],
-    /** Last successful upload — used to lock the Submit button. */
-    lastUpload: null, // { agent, name } | null
+    /** True after at least one successful hub upload from this browser. */
+    hasSubmitted: false,
   };
+}
+
+function readStore(key) {
+  try {
+    return localStorage.getItem(key) || "";
+  } catch {
+    return "";
+  }
+}
+
+function writeStore(key, value) {
+  try {
+    if (value == null || value === "") localStorage.removeItem(key);
+    else localStorage.setItem(key, String(value));
+  } catch {
+    /* private mode / quota — continue without persistence */
+  }
+}
+
+/** Mint or reuse the browser player uid (p_ + 24 hex). */
+function ensurePlayerUid() {
+  const existing = String(state.submit.playerUid || readStore(PLAYER_STORE.uid) || "").trim();
+  if (/^p_[0-9a-f]{16,32}$/.test(existing)) {
+    state.submit.playerUid = existing;
+    writeStore(PLAYER_STORE.uid, existing);
+    return existing;
+  }
+  const bytes = new Uint8Array(12);
+  crypto.getRandomValues(bytes);
+  const uid =
+    "p_" +
+    Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  state.submit.playerUid = uid;
+  writeStore(PLAYER_STORE.uid, uid);
+  return uid;
+}
+
+/** Prefill Coup AI name + full name from localStorage when opening submit. */
+function loadSavedSubmitIdentity() {
+  const savedName = readStore(PLAYER_STORE.name).trim();
+  const savedFull = readStore(PLAYER_STORE.fullName).trim();
+  if (!state.submit.name && savedName) state.submit.name = savedName;
+  if (!state.submit.fullName && savedFull) state.submit.fullName = savedFull;
+  state.submit.hasSubmitted = readStore(PLAYER_STORE.submitted) === "1";
+}
+
+function persistSubmitIdentity() {
+  const name = String(state.submit.name || "").trim();
+  const fullName = normalizeFullName(state.submit.fullName);
+  if (name) writeStore(PLAYER_STORE.name, name);
+  if (fullName) writeStore(PLAYER_STORE.fullName, fullName);
+  if (state.submit.playerUid) writeStore(PLAYER_STORE.uid, state.submit.playerUid);
+  if (state.submit.hasSubmitted) writeStore(PLAYER_STORE.submitted, "1");
 }
 
 /** Hub / arena Coup AI names already on the master (lowercase). */
@@ -183,33 +242,7 @@ function hubNameSet() {
     const raw = String(agent.name || "").trim();
     if (raw) names.add(raw.toLowerCase());
   }
-  for (const name of state.submit.uploadedNames || []) {
-    if (name) names.add(String(name).toLowerCase());
-  }
   return names;
-}
-
-/**
- * Why Submit should stay off after a successful upload of this same id.
- * Intentional hub replaces of an older entry are still allowed; only block
- * double-submit of a name we just uploaded this session.
- * @returns {string|null}
- */
-function duplicateSubmitReason(name, agentId) {
-  const trimmed = String(name || "").trim();
-  if (!trimmed) return null;
-  const key = trimmed.toLowerCase();
-  const uploaded = state.submit.uploadedNames || [];
-  if (!uploaded.includes(key)) return null;
-  const last = state.submit.lastUpload;
-  if (last && String(last.name || "").toLowerCase() === key) {
-    if (!agentId || last.agent === agentId) {
-      return `"${trimmed}" was just submitted — pick a new Coup AI name (or another agent) to upload again`;
-    }
-    // Same hub id, different local file — still a duplicate id this session.
-    return `"${trimmed}" was just submitted under that Coup AI name — choose a new name`;
-  }
-  return `"${trimmed}" was already submitted this session — choose a new Coup AI name`;
 }
 
 const FULL_NAME_RE = /^[A-Za-z][A-Za-z'-]*(?: [A-Za-z][A-Za-z'-]*)+$/;
@@ -1223,7 +1256,7 @@ function renderSetup() {
   const gamesField = manual
     ? ""
     : `<div class="field">
-          <label for="setup-games">Games / agent</label>
+          <label for="setup-games">Games</label>
           <input id="setup-games" type="number" min="1" value="${s.games}">
         </div>`;
 
@@ -2399,11 +2432,9 @@ function renderSubmitModal() {
   const nameTrimmed = (s.name || "").trim();
   const coupAiIssue = coupAiNameError(s.name);
   const coupAiOk = !coupAiIssue;
-  const dupReason = duplicateSubmitReason(nameTrimmed, selected);
+  const updating = Boolean(s.hasSubmitted);
   const onHubAlready =
-    Boolean(nameTrimmed) &&
-    !dupReason &&
-    taken.has(nameTrimmed.toLowerCase());
+    Boolean(nameTrimmed) && taken.has(nameTrimmed.toLowerCase());
   const showCoupAiError = Boolean(nameTrimmed) && Boolean(coupAiIssue);
   const canAct = Boolean(selected) && coupAiOk && !busy;
   const localReady =
@@ -2412,11 +2443,9 @@ function renderSubmitModal() {
     report.name_ok !== false &&
     report.safe !== false;
   // Submit stays disabled without coup-master .env (hub unset) or when hub is down.
-  const canSubmit =
-    canAct && hubReady && localReady && fullNameOk && !dupReason;
-  const submitTitle = dupReason
-    ? dupReason
-    : hubStatus === "checking"
+  const canSubmit = canAct && hubReady && localReady && fullNameOk;
+  const submitTitle =
+    hubStatus === "checking"
       ? "Checking hub…"
       : hubUnset
         ? "Add a coup-master .env first — local play still works"
@@ -2427,29 +2456,31 @@ function renderSubmitModal() {
             : !coupAiOk
               ? coupAiIssue || "Name your Coup AI"
               : localReady
-                ? onHubAlready
-                  ? `Replace existing hub agent "${nameTrimmed}"`
-                  : "Upload to coup-master"
+                ? updating
+                  ? `Update your hub entry (${nameTrimmed || "Coup AI"})`
+                  : onHubAlready
+                    ? `"${nameTrimmed}" is on the hub — only the owner can replace it`
+                    : "Upload to coup-master"
                 : "Run Test locally and get READY first";
   const submitLabel = s.busy === "submit"
-    ? "Submitting…"
-    : dupReason
-      ? "Already submitted"
-      : onHubAlready && localReady
-        ? "Replace on hub"
-        : "Submit to hub";
+    ? updating
+      ? "Updating…"
+      : "Submitting…"
+    : updating
+      ? "Update on hub"
+      : "Submit to hub";
   const fullNameHint = fullNameIssue
     ? `<p class="field-error">${escapeHtml(fullNameIssue)}</p>`
-    : `<p class="muted field-hint">First and last name, as you'd write it on a form</p>`;
+    : `<p class="muted field-hint">First and last name, as you'd write it on a form — saved in this browser</p>`;
   let coupAiHint;
   if (showCoupAiError) {
     coupAiHint = `<p class="field-error">${escapeHtml(coupAiIssue)}</p>`;
-  } else if (dupReason && !s.success) {
-    coupAiHint = `<p class="field-error">${escapeHtml(dupReason)}</p>`;
+  } else if (updating) {
+    coupAiHint = `<p class="muted field-hint">Public handle — re-submit updates your hub entry</p>`;
   } else if (onHubAlready) {
     coupAiHint = `<p class="muted field-hint">"${escapeHtml(
       nameTrimmed
-    )}" is already on the hub — submit will replace it</p>`;
+    )}" is already on the hub — pick another public name unless it's yours</p>`;
   } else {
     coupAiHint = `<p class="muted field-hint">Public handle on the hub — letters, numbers, _ and - only</p>`;
   }
@@ -2460,7 +2491,7 @@ function renderSubmitModal() {
   } else if (s.success) {
     statusHtml = `<div class="submit-success">
       <div>${escapeHtml(s.success)}</div>
-      <p class="muted field-hint submit-success-hint">Submit is locked for this Coup AI name. Pick another local agent or a new name to upload again.</p>
+      <p class="muted field-hint submit-success-hint">You can keep pushing updates from this browser.</p>
     </div>`;
   }
   if (report && !s.success) {
@@ -2515,7 +2546,7 @@ function renderSubmitModal() {
             <label for="submit-name">Name of your Coup AI</label>
             <input id="submit-name" type="text" autocomplete="off" spellcheck="false"
               placeholder="milo_bot" value="${escapeAttr(s.name || "")}" ${busy ? "disabled" : ""}
-              aria-invalid="${showCoupAiError || (dupReason && !s.success) ? "true" : "false"}">
+              aria-invalid="${showCoupAiError ? "true" : "false"}">
             ${coupAiHint}
           </div>
           ${statusHtml}
@@ -2564,12 +2595,15 @@ function bindMenuCloser() {
 async function openSubmitModal() {
   closeSetupMenu();
   state.submitOpen = true;
+  ensurePlayerUid();
+  loadSavedSubmitIdentity();
   // Keep agent / name / last READY report across open/close.
   const local = localAgents();
   if (!state.submit.agent && local.length) {
     state.submit.agent = local[0].id;
     if (!state.submit.name) state.submit.name = agentFolderName(local[0]);
   }
+  persistSubmitIdentity();
   state.hubPing = { status: "checking", error: null, version: null };
   render();
   if (!state.hub) {
@@ -2584,6 +2618,7 @@ function closeSubmitModal() {
   if (submitName) state.submit.name = submitName.value;
   const submitFullName = document.getElementById("submit-full-name");
   if (submitFullName) state.submit.fullName = submitFullName.value;
+  persistSubmitIdentity();
   state.submitOpen = false;
   state.submit.busy = null;
   if (submitKeyHandler) {
@@ -2641,6 +2676,7 @@ function bindSubmitModal() {
     state.submit.success = null;
     state.submit.error = null;
     if (state.submit.report) state.submit.report = null;
+    persistSubmitIdentity();
     render();
     const again = document.getElementById("submit-name");
     if (again) {
@@ -2654,6 +2690,7 @@ function bindSubmitModal() {
     state.submit.fullName = fullNameInput.value;
     state.submit.success = null;
     state.submit.error = null;
+    persistSubmitIdentity();
     render();
     const again = document.getElementById("submit-full-name");
     if (again) {
@@ -2708,16 +2745,12 @@ async function runSubmitUpload() {
   const agent = state.submit.agent;
   const name = (state.submit.name || "").trim();
   const fullName = normalizeFullName(state.submit.fullName);
+  const playerUid = ensurePlayerUid();
+  const wasUpdate = Boolean(state.submit.hasSubmitted);
   if (!agent || state.submit.busy) return;
   const nameIssue = coupAiNameError(name);
   if (nameIssue) {
     state.submit.error = nameIssue;
-    render();
-    return;
-  }
-  const dupReason = duplicateSubmitReason(name, agent);
-  if (dupReason) {
-    state.submit.error = dupReason;
     render();
     return;
   }
@@ -2747,6 +2780,7 @@ async function runSubmitUpload() {
   state.submit.busy = "submit";
   state.submit.error = null;
   state.submit.success = null;
+  persistSubmitIdentity();
   render();
   try {
     const meta = await fetchJson("/api/hub/upload", {
@@ -2756,6 +2790,7 @@ async function runSubmitUpload() {
         agent,
         name,
         full_name: fullName,
+        player_uid: playerUid,
         require_ready: true,
         games: 40,
         sandbox_games: 2,
@@ -2763,18 +2798,16 @@ async function runSubmitUpload() {
     });
     const who = meta.full_name || meta.uploader || fullName;
     const uploaded = String(meta.name || name).trim();
-    state.submit.success = `Uploaded ${uploaded} as ${who} (${meta.size_bytes} bytes).`;
-    state.submit.lastUpload = { agent, name: uploaded };
-    const key = uploaded.toLowerCase();
-    if (!state.submit.uploadedNames.includes(key)) {
-      state.submit.uploadedNames = [...state.submit.uploadedNames, key];
-    }
+    const verb = wasUpdate ? "Updated" : "Uploaded";
+    state.submit.success = `${verb} ${uploaded} as ${who} (${meta.size_bytes} bytes).`;
+    state.submit.hasSubmitted = true;
+    persistSubmitIdentity();
     state.submit.report = {
       ready: true,
       name_ok: true,
       safe: true,
       issues: [],
-      text: `READY\nuploaded ${uploaded}\nfull name ${who}\nsha256 ${meta.sha256}`,
+      text: `READY\n${verb.toLowerCase()} ${uploaded}\nfull name ${who}\nplayer ${playerUid}\nsha256 ${meta.sha256}`,
     };
     // Refresh arena catalog so the name shows as taken immediately.
     await loadAgents({ quiet: true });

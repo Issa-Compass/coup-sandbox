@@ -6,7 +6,14 @@ import os
 
 import pytest
 
-from coup.hub_client import HubError, load_repo_dotenv, validate_full_name, validate_local_name
+from coup.hub_client import (
+    HubError,
+    load_repo_dotenv,
+    new_player_uid,
+    validate_full_name,
+    validate_local_name,
+    validate_player_uid,
+)
 
 
 def test_load_repo_dotenv_does_not_override(tmp_path, monkeypatch):
@@ -44,3 +51,15 @@ def test_full_name():
         validate_full_name("Ada")
     with pytest.raises(HubError, match="letters, spaces"):
         validate_full_name("Ada_Lovelace")
+
+
+def test_player_uid():
+    uid = new_player_uid()
+    assert uid.startswith("p_")
+    validate_player_uid(uid)
+    with pytest.raises(HubError, match="required"):
+        validate_player_uid("")
+    with pytest.raises(HubError, match="p_"):
+        validate_player_uid("u_" + ("0" * 24))
+    with pytest.raises(HubError, match="hex"):
+        validate_player_uid("p_ABCDEF0123456789abcdef01")

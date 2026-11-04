@@ -110,7 +110,8 @@ def dashboard_with_hub(tmp_path: Path):
 
             name = _form_field("name") or "uploaded"
             person = _form_field("full_name") or self.headers.get("X-Uploader")
-            uploads.append({"raw": raw, "uploader": person})
+            player_uid = _form_field("player_uid")
+            uploads.append({"raw": raw, "uploader": person, "player_uid": player_uid})
             body = json.dumps(
                 {
                     "name": name,
@@ -119,6 +120,7 @@ def dashboard_with_hub(tmp_path: Path):
                     "uploaded_at": "2026-01-01T00:00:00+00:00",
                     "uploader": person,
                     "full_name": person,
+                    "player_uid": player_uid,
                 }
             ).encode()
             self.send_response(201)
@@ -374,6 +376,7 @@ def test_upload_after_ready(dashboard_with_hub):
     assert hub["configured"] is True
     assert hub["master_url"] == master_url
 
+    uid = "p_" + ("a" * 24)
     status, body = _post(
         base,
         "/api/hub/upload",
@@ -384,13 +387,16 @@ def test_upload_after_ready(dashboard_with_hub):
             "games": 5,
             "sandbox_games": 1,
             "full_name": "Ada Lovelace",
+            "player_uid": uid,
         },
     )
     assert status == 201, body
     assert body["name"] == "Milo_1"
     assert body["full_name"] == "Ada Lovelace"
+    assert body["player_uid"] == uid
     assert len(uploads) == 1
     assert uploads[0]["uploader"] == "Ada Lovelace"
+    assert uploads[0]["player_uid"] == uid
 
 
 def test_upload_requires_full_name(dashboard_with_hub):
@@ -404,10 +410,30 @@ def test_upload_requires_full_name(dashboard_with_hub):
             "require_ready": True,
             "games": 5,
             "sandbox_games": 1,
+            "player_uid": "p_" + ("b" * 24),
         },
     )
     assert status == 400
     assert "first and last name" in body["error"].lower()
+    assert uploads == []
+
+
+def test_upload_requires_player_uid(dashboard_with_hub):
+    base, uploads, _ = dashboard_with_hub
+    status, body = _post(
+        base,
+        "/api/hub/upload",
+        {
+            "agent": "template",
+            "name": "NoUid",
+            "require_ready": True,
+            "games": 5,
+            "sandbox_games": 1,
+            "full_name": "Ada Lovelace",
+        },
+    )
+    assert status == 400
+    assert "player_uid" in body["error"].lower()
     assert uploads == []
 
 

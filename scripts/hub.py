@@ -14,6 +14,7 @@ root, or export those variables. Upload needs the API key.
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -29,10 +30,44 @@ from coup.hub_client import (  # noqa: E402
     list_queue,
     list_remote_agents,
     load_repo_dotenv,
+    new_player_uid,
     reject_agent,
     upload_agent,
+    validate_player_uid,
 )
 from coup.runner.catalog import LOCAL, resolve_agent  # noqa: E402
+
+PLAYER_FILE = ROOT / ".coup-player.json"
+
+
+def _load_player_file() -> dict:
+    if not PLAYER_FILE.is_file():
+        return {}
+    try:
+        raw = json.loads(PLAYER_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def _save_player_file(data: dict) -> None:
+    PLAYER_FILE.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _resolve_player_uid(explicit: str | None) -> str:
+    if explicit:
+        validate_player_uid(explicit)
+        return explicit.strip()
+    stored = _load_player_file()
+    existing = stored.get("player_uid")
+    if isinstance(existing, str) and existing.strip():
+        validate_player_uid(existing)
+        return existing.strip()
+    uid = new_player_uid()
+    stored["player_uid"] = uid
+    _save_player_file(stored)
+    print(f"minted player_uid={uid} (saved to {PLAYER_FILE.name})", file=sys.stderr)
+    return uid
 
 
 def main() -> None:
@@ -44,12 +79,17 @@ def main() -> None:
     sub.add_parser("list", help="List approved remote submissions")
 
     up = sub.add_parser("upload", help="Upload a local agent (listed immediately if safe)")
-    up.add_argument("name", help="Unique submission name (A-Za-z0-9_-)")
+    up.add_argument("name", help="Unique public Coup AI name (A-Za-z0-9_-)")
     up.add_argument("--path", type=Path, default=None, help="Path to agent.py (default: resolve name)")
     up.add_argument(
         "--full-name",
         required=True,
         help="Your full name (at least two names; middle names OK)",
+    )
+    up.add_argument(
+        "--player-uid",
+        default=None,
+        help="Stable player id (p_ + hex). Default: reuse or mint .coup-player.json",
     )
 
     down = sub.add_parser("download", help="Download an approved remote agent into agents/local/")
@@ -89,12 +129,22 @@ def main() -> None:
 
         if args.cmd == "upload":
             path = args.path or resolve_agent(args.name)
+            uid = _resolve_player_uid(args.player_uid)
             meta = upload_agent(
-                args.name, path, base_url=args.url, full_name=args.full_name
+                args.name,
+                path,
+                base_url=args.url,
+                full_name=args.full_name,
+                player_uid=uid,
             )
+            stored = _load_player_file()
+            stored["player_uid"] = uid
+            stored["name"] = meta.name
+            stored["full_name"] = meta.full_name or args.full_name
+            _save_player_file(stored)
             who = f" by {meta.full_name}" if meta.full_name else ""
             print(
-                f"uploaded {meta.name}{who} status={meta.status} "
+                f"uploaded {meta.name}{who} player_uid={uid} status={meta.status} "
                 f"sha256={meta.sha256[:12]}… size={meta.size_bytes}"
             )
             return
