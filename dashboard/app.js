@@ -277,9 +277,25 @@ const app = document.getElementById("app");
 
 async function init() {
   window.addEventListener("hashchange", () => route());
-  await Promise.all([loadRuns(), loadAgents(), loadSession(), loadHub()]);
-  syncLivePolling();
-  route();
+  const hasDeepLink = Boolean(location.hash.replace(/^#\/?/, "").trim());
+
+  // Cold start with no hash: open an empty tournament draft immediately.
+  // Old runs still load into the Run menu in the background.
+  if (!hasDeepLink) startNewTournament();
+
+  const boot = Promise.all([loadRuns(), loadAgents(), loadSession(), loadHub()]);
+  if (hasDeepLink) {
+    await boot;
+    syncLivePolling();
+    await route();
+    return;
+  }
+
+  boot.then(() => {
+    ensureRunInList(state.runId);
+    syncLivePolling();
+    render();
+  });
 }
 
 async function loadHub() {
@@ -444,6 +460,8 @@ async function loadRuns({ quiet = false } = {}) {
   try {
     const data = await fetchJson("/api/runs");
     state.runs = data.runs || [];
+    // Keep a client-only draft id in the menu after history replaces the list.
+    ensureRunInList(state.runId);
     if (!state.runId && state.runs.length) state.runId = state.runs[0].id;
   } catch (err) {
     if (!quiet) console.error(err);
@@ -479,6 +497,13 @@ async function loadSession({ quiet = false } = {}) {
 
 async function loadScoreboard({ quiet = false } = {}) {
   if (!state.runId) {
+    state.standings = null;
+    state.roundSummaries = {};
+    state.runRounds = [];
+    return;
+  }
+  // Fresh empty draft is not on disk yet — skip 404 round-trips.
+  if (tournamentDraftPending()) {
     state.standings = null;
     state.roundSummaries = {};
     state.runRounds = [];
@@ -925,12 +950,21 @@ function displayId(value) {
 }
 
 function agentDisplayName(agent) {
-  return displayId((agent && agent.name) || (agent && agent.id) || "");
+  if (!agent) return "";
+  // Base set: short id (challenger), not the *_bot file stem.
+  if (isStandardAgent(agent)) {
+    return displayId(agent.id || String(agent.name || "").replace(/_bot$/i, ""));
+  }
+  // Arena: bare hub name — never the arena: catalog id.
+  if (agent.kind === "submission") {
+    const raw = String(agent.name || agent.id || "");
+    return displayId(raw.startsWith("arena:") ? raw.slice("arena:".length) : raw);
+  }
+  return displayId(agent.name || agent.id || "");
 }
 
 function agentKindLabel(agent) {
   if (agent.kind === "local") return "local";
-  if (agent.kind === "submission") return "arena";
   return "";
 }
 
@@ -956,8 +990,6 @@ function renderAgentPickerChip(agent, selected) {
     count > 0
       ? `Add another ${label} (${count} in roster)`
       : `Add ${label}`;
-  // Arena chips sit under "The Arena" — skip the redundant kind tag there.
-  const kindHtml = agent.kind === "submission" ? "" : agentKindHtml(agent);
   return `
     <button
       class="agent-pick"
@@ -967,7 +999,7 @@ function renderAgentPickerChip(agent, selected) {
     >
       <span class="agent-pick-plus" aria-hidden="true">+</span>
       <span class="agent-id">${escapeHtml(label)}</span>
-      ${kindHtml}
+      ${agentKindHtml(agent)}
     </button>`;
 }
 
@@ -1161,11 +1193,12 @@ function renderManualRoster() {
     ? selected
         .map((id, index) => {
           const agent = agentById(id);
+          const label = agentDisplayName(agent) || displayId(id);
           return `
             <div class="agent-seat ${agentSeatClass(agent)}">
-              <span class="agent-id">${escapeHtml(displayId(id))}</span>
+              <span class="agent-id">${escapeHtml(label)}</span>
               ${agentKindHtml(agent)}
-              <button class="agent-remove" type="button" data-remove-index="${index}" aria-label="Remove ${escapeAttr(id)}">×</button>
+              <button class="agent-remove" type="button" data-remove-index="${index}" aria-label="Remove ${escapeAttr(label)}">×</button>
             </div>`;
         })
         .join("")
@@ -2752,9 +2785,10 @@ async function openTournamentSetup() {
   state.setupOpen = true;
   closeSetupMenu();
   state.setupError = null;
+  render();
   // Hub approvals land after upload; refresh so Submitted picks up coup-master.
   await loadAgents({ quiet: true });
-  render();
+  if (state.setupOpen && state.setupMode === "tournament") render();
 }
 
 function tournamentDraftPending() {
