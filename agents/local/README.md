@@ -45,7 +45,7 @@ Edit only that `agent.py`. One `Agent` subclass per file. Import only
 
 ```bash
 python scripts/play.py --agents your-name,honest --seed 1
-python scripts/tournament.py --agents your-name random honest --games-per-agent 4 --no-sandbox --run-id local-demo --force
+python scripts/tournament.py --round 1 --agents your-name random honest --games-per-agent 4 --no-sandbox --run-id local-demo --force
 python scripts/serve_dashboard.py --port 8765
 ```
 
