@@ -31,9 +31,14 @@ def default_agent_paths(explicit: list[str] | None, with_examples: bool) -> list
     if found:
         paths = list(found)
         if with_examples:
-            paths.extend(EXAMPLES[name] for name in ("random", "honest", "bluffer", "challenger"))
+            paths.extend(
+                EXAMPLES[name]
+                for name in ("random", "honest", "knife", "turtle", "greedy")
+            )
         return paths
-    return [EXAMPLES[name] for name in ("random", "honest", "bluffer", "challenger")]
+    return [
+        EXAMPLES[name] for name in ("random", "honest", "knife", "turtle", "greedy")
+    ]
 
 
 def run_round(

@@ -43,7 +43,7 @@ Repeat until the last line is `READY`. If it says `NOT READY`, fix illegal moves
 When `READY` is stable, run:
 
 ```powershell
-python scripts/play.py --agents agents/submissions/YOUR-NAME/agent.py,honest,bluffer,challenger --seed 1
+python scripts/play.py --agents agents/submissions/YOUR-NAME/agent.py,honest,knife,turtle,greedy --seed 1
 ```
 
 Fix anything that throws. Then stop.

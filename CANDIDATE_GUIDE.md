@@ -26,7 +26,7 @@ Do not edit the engine, the examples, or someone else's folder. Do not add depen
 2. Copy that file into your folder and rename the class if you want. The folder name is what matters.
 3. Read `RULES.md` once. Then keep `API.md` open.
 4. Run `python scripts/test_agent.py agents/submissions/<your-name>/agent.py` after each change. Stop when it says `READY`.
-5. Watch a game: `python scripts/play.py --agents your-name,honest,bluffer,challenger --seed 1`.
+5. Watch a game: `python scripts/play.py --agents your-name,honest,knife,turtle,greedy --seed 1`.
 6. When you have a coup-master `.env`, upload with `scripts/hub.py` (see above). Re-upload replaces your hub entry.
 
 If you want Cursor or Claude to write the first version, paste `AI_PROMPT.md` and put your folder name in the blank.
@@ -41,11 +41,12 @@ The example bots are the ladder (shared foundation + tendency knobs in
 - `random` mostly picks legal moves at random, with survival floors (card-count
   impossibles, last-life Contessa). Beat this first.
 - `honest` is mostly truthful: rare light bluffs, survival Contessa, and challenges only soft claims.
-- `bluffer` calls Tax and Assassinate a lot, including when it is lying — but
-  still Coups threats and does not free-die to Assassinate on last influence.
-- `challenger` plays honestly and challenges soft claims (not coin-flip early Tax).
+- `knife` races coins then Assassinates (honest or bluff at 2 lives).
+- `turtle` Taxes with Duke otherwise Incomes; almost never FA/Steal.
+- `greedy` runs an FA + Steal economy (Tax if it holds Duke).
+- Also shipped: `bluffer` (Tax/Assassin liar) and `challenger` (soft-claim caller).
 
-You can read their source. Copying `challenger` and changing one number is allowed and will not win a tournament by itself.
+You can read their source. Copying an example and changing one number is allowed and will not win a tournament by itself.
 
 The scoreboard uses the points in `RULES.md`, not raw wins. At a 6-player table, 1st is worth 6 points (`n` at an `n`-player table) and 2nd is worth 3. A bot that always comes second still beats a bot that wins rarely and otherwise comes last.
 
