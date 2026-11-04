@@ -1223,7 +1223,7 @@ function renderSetup() {
   const gamesField = manual
     ? ""
     : `<div class="field">
-          <label for="setup-games">Games / agent</label>
+          <label for="setup-games">Games</label>
           <input id="setup-games" type="number" min="1" value="${s.games}">
         </div>`;
 
