@@ -3020,6 +3020,11 @@ function bindSetup() {
   document.getElementById("close-setup")?.addEventListener("click", () => {
     readSetupFieldsFromDom();
     state.setupOpen = false;
+    state.setupError = null;
+    if (manual) {
+      leaveManualGame();
+      return;
+    }
     render();
   });
   document.getElementById("setup-seed")?.addEventListener("input", (event) => {
