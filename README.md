@@ -118,7 +118,7 @@ python scripts/test_agent.py agents/submissions/your-name/agent.py
 python scripts/hub.py upload your-name --full-name "Ada Lovelace"
 ```
 
-A real full name (at least two words) is required: letters, spaces, apostrophes, and hyphens only — no digits. The **Coup AI** name (`your-name`) uses `A–Z a–z 0–9 _ -` only. Re-upload replaces your hub entry. `scripts/hub.py list` shows what is already up. Pull someone else’s bot into local with `python scripts/hub.py download other-bot`.
+A real full name (at least two words) is required: letters, spaces, apostrophes, and hyphens only — no digits. The **Coup AI** name (`your-name`) uses `A–Z a–z 0–9 _ -` only — that is your public handle. Each browser (or CLI `.coup-player.json`) keeps a stable `player_uid`; re-upload with the same uid **replaces** your one hub entry (clear site data / delete that file for a new uid). Dashboard Submit mints the uid on first open and also saves your Coup AI name + full name in localStorage. `scripts/hub.py list` shows what is already up. Pull someone else’s bot into local with `python scripts/hub.py download other-bot`.
 
 ## Data your agent can analyze
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import secrets
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -18,6 +19,9 @@ NAME_MAX = 64
 FULL_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z'-]*(?: [A-Za-z][A-Za-z'-]*)+$")
 FULL_NAME_MIN = 3
 FULL_NAME_MAX = 128
+PLAYER_UID_RE = re.compile(r"^p_[0-9a-f]{16,32}$")
+PLAYER_UID_MIN = 18
+PLAYER_UID_MAX = 34
 RESERVED_NAMES = {
     "template",
     "random",
@@ -69,6 +73,7 @@ class HubAgent:
     uploaded_at: str
     uploader: str | None = None
     full_name: str | None = None
+    player_uid: str | None = None
     status: str = "approved"
     approved_at: str | None = None
 
@@ -131,9 +136,28 @@ def validate_full_name(value: str | None) -> None:
         raise HubError("full name: letters, spaces, apostrophes, and hyphens only")
 
 
+def validate_player_uid(value: str | None) -> None:
+    """Raise HubError when player_uid would be rejected by coup-master."""
+
+    if value is None or not str(value).strip():
+        raise HubError("player_uid is required")
+    text = str(value).strip()
+    if len(text) < PLAYER_UID_MIN or len(text) > PLAYER_UID_MAX:
+        raise HubError(f"player_uid must be {PLAYER_UID_MIN}–{PLAYER_UID_MAX} characters")
+    if not PLAYER_UID_RE.fullmatch(text):
+        raise HubError("player_uid must look like p_ followed by 16–32 lowercase hex digits")
+
+
+def new_player_uid() -> str:
+    """Mint a fresh player uid (p_ + 24 hex)."""
+
+    return "p_" + secrets.token_hex(12)
+
+
 def _parse_agent(row: dict[str, Any]) -> HubAgent:
     person = row.get("full_name") or row.get("uploader")
     person_s = str(person) if person else None
+    uid = row.get("player_uid")
     return HubAgent(
         name=str(row["name"]),
         sha256=str(row["sha256"]),
@@ -141,6 +165,7 @@ def _parse_agent(row: dict[str, Any]) -> HubAgent:
         uploaded_at=str(row["uploaded_at"]),
         uploader=person_s,
         full_name=person_s,
+        player_uid=str(uid) if uid else None,
         status=str(row.get("status") or "approved"),
         approved_at=str(row["approved_at"]) if row.get("approved_at") else None,
     )
@@ -276,6 +301,7 @@ def upload_agent(
     api_key: str | None = None,
     full_name: str | None = None,
     uploader: str | None = None,
+    player_uid: str | None = None,
     timeout: float = DEFAULT_TIMEOUT,
 ) -> HubAgent:
     validate_local_name(name)
@@ -283,6 +309,9 @@ def upload_agent(
     validate_full_name(person)
     assert person is not None
     person = " ".join(person.strip().split())
+    validate_player_uid(player_uid)
+    assert player_uid is not None
+    uid = player_uid.strip()
     path = Path(path)
     if not path.is_file():
         raise HubError(f"file not found: {path}")
@@ -298,6 +327,10 @@ def upload_agent(
             f"--{boundary}\r\n".encode(),
             b'Content-Disposition: form-data; name="full_name"\r\n\r\n',
             person.encode("utf-8"),
+            b"\r\n",
+            f"--{boundary}\r\n".encode(),
+            b'Content-Disposition: form-data; name="player_uid"\r\n\r\n',
+            uid.encode("utf-8"),
             b"\r\n",
             f"--{boundary}\r\n".encode(),
             b'Content-Disposition: form-data; name="file"; filename="agent.py"\r\n',
