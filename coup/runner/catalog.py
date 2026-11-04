@@ -95,9 +95,9 @@ def submission_agents() -> list[Path]:
 
 def _catalog_path(path: Path) -> str:
     try:
-        return str(path.resolve().relative_to(ROOT.resolve()))
+        return path.resolve().relative_to(ROOT.resolve()).as_posix()
     except ValueError:
-        return str(path.resolve())
+        return path.resolve().as_posix()
 
 
 def list_available_agents() -> list[dict[str, str]]:

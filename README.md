@@ -91,7 +91,7 @@ Stop when it prints `READY`. Skim [`RULES.md`](RULES.md) once; keep [`API.md`](A
 
 ```bash
 python scripts/play.py --agents your-name,honest,bluffer,challenger --seed 1
-python scripts/tournament.py --agents your-name random honest bluffer challenger --games-per-agent 4 --no-sandbox --run-id local-demo --force
+python scripts/tournament.py --round 1 --agents your-name random honest bluffer challenger --games-per-agent 4 --no-sandbox --run-id local-demo --force
 ```
 
 Or in the dashboard: **Play Games** → **Local** → add your agent (or **Add all**) with the examples → run a session → **Games** → **Watch**.
@@ -118,7 +118,7 @@ python scripts/test_agent.py agents/submissions/your-name/agent.py
 python scripts/hub.py upload your-name --full-name "Ada Lovelace"
 ```
 
-A real full name (at least two names) is required. Names: `A–Z a–z 0–9 _ -` only. Re-upload replaces your hub entry. `scripts/hub.py list` shows what is already up. Pull someone else’s bot into local with `python scripts/hub.py download other-bot`.
+A real full name (at least two words) is required: letters, spaces, apostrophes, and hyphens only — no digits. The **Coup AI** name (`your-name`) uses `A–Z a–z 0–9 _ -` only. Re-upload replaces your hub entry. `scripts/hub.py list` shows what is already up. Pull someone else’s bot into local with `python scripts/hub.py download other-bot`.
 
 ## Read next
 

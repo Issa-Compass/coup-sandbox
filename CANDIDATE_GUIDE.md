@@ -16,7 +16,7 @@ That folder is **gitignored**. Do not open a pull request with your bot. When yo
 python scripts/hub.py upload <your-name> --full-name "Your Full Name"
 ```
 
-`<your-name>` is the name on the scoreboard. Use letters, digits, underscore, and hyphen. A real full name (at least two names) is required.
+`<your-name>` is the name on the scoreboard. Use letters, digits, underscore, and hyphen. A real full name (at least two words) is required for upload: letters, spaces, apostrophes, and hyphens only — no digits in the full name.
 
 Do not edit the engine, the examples, or someone else's folder. Do not add dependencies. The standard library and `coup.agent_api` are enough.
 
