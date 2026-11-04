@@ -1,6 +1,6 @@
 """Public contract for Coup agents.
 
-Candidates may import from this module and nothing else under ``coup``.
+Agents may import from this module and nothing else under ``coup``.
 The engine calls the methods on ``Agent``. Return the types documented here.
 """
 

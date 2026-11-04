@@ -294,6 +294,16 @@ async function pingHub() {
   state.hubPing = { status: "checking", error: null, version: null };
   try {
     const data = await fetchJson("/api/hub/ping");
+    if (data.configured === false) {
+      state.hubPing = {
+        status: "unset",
+        error: "Add a coup-master .env to submit (see .env.example)",
+        version: null,
+      };
+      if (state.hub) state.hub.configured = false;
+      return;
+    }
+    if (state.hub) state.hub.configured = true;
     state.hubPing = {
       status: data.status === "ready" ? "ready" : "offline",
       error: data.error || null,
@@ -998,7 +1008,7 @@ function renderAgentCatalog() {
     : `<div class="muted agent-catalog-empty">No agents in agents/local yet.</div>`;
   const submittedEmpty = state.hub?.configured
     ? "No approved agents on coup-master yet."
-    : "Configure coup-master (.env) to load The Arena from the hub.";
+    : "Arena needs a coup-master .env. Local play works without it.";
   const submittedPicks = submitted.length
     ? submitted.map((agent) => renderAgentPickerChip(agent, selected)).join("")
     : `<div class="muted agent-catalog-empty">${submittedEmpty}</div>`;
@@ -2217,6 +2227,10 @@ function renderHubStatus() {
     badge = "READY";
     badgeClass = "ready";
     title = ping.version ? `Hub v${ping.version}` : "Hub ready";
+  } else if (status === "unset") {
+    badge = "NO .ENV";
+    badgeClass = "not-ready";
+    title = ping?.error || "Add a coup-master .env to submit (see .env.example)";
   } else if (status === "offline") {
     badge = "OFFLINE";
     badgeClass = "not-ready";
@@ -2236,7 +2250,11 @@ function renderSubmitModal() {
   const local = localAgents();
   const s = state.submit;
   const selected = s.agent;
-  const hubReady = state.hubPing?.status === "ready";
+  const hubStatus = state.hubPing?.status;
+  const hubReady = hubStatus === "ready";
+  const hubUnset =
+    hubStatus === "unset" ||
+    (state.hub?.configured === false && hubStatus !== "checking");
   const report = s.report;
   const taken = hubNameSet();
   const picks = local.length
@@ -2277,21 +2295,26 @@ function renderSubmitModal() {
     report.ready === true &&
     report.name_ok !== false &&
     report.safe !== false;
+  // Submit stays disabled without coup-master .env (hub unset) or when hub is down.
   const canSubmit =
     canAct && hubReady && localReady && fullNameOk && !dupReason;
   const submitTitle = dupReason
     ? dupReason
-    : !hubReady
-      ? "Hub is offline — check hub status first"
-      : !fullNameOk
-        ? fullNameIssue || "Enter your full name"
-        : !coupAiOk
-          ? coupAiIssue || "Name your Coup AI"
-          : localReady
-            ? onHubAlready
-              ? `Replace existing hub agent "${nameTrimmed}"`
-              : "Upload to coup-master"
-            : "Run Test locally and get READY first";
+    : hubStatus === "checking"
+      ? "Checking hub…"
+      : hubUnset
+        ? "Add a coup-master .env first — local play still works"
+        : !hubReady
+          ? "Hub is offline — check hub status first"
+          : !fullNameOk
+            ? fullNameIssue || "Enter your full name"
+            : !coupAiOk
+              ? coupAiIssue || "Name your Coup AI"
+              : localReady
+                ? onHubAlready
+                  ? `Replace existing hub agent "${nameTrimmed}"`
+                  : "Upload to coup-master"
+                : "Run Test locally and get READY first";
   const submitLabel = s.busy === "submit"
     ? "Submitting…"
     : dupReason
@@ -2585,8 +2608,9 @@ async function runSubmitUpload() {
     render();
     return;
   }
-  if (!state.hub?.configured) {
-    state.submit.error = "Hub isn't configured yet — set COUP_MASTER_URL first.";
+  if (!state.hub?.configured || state.hubPing?.status === "unset") {
+    state.submit.error =
+      "Add a coup-master .env first (see .env.example). The dashboard works without it — only submit needs the hub.";
     render();
     return;
   }

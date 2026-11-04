@@ -1,6 +1,6 @@
 """Talk to coup-master from a local sandbox.
 
-Put the in-person `.env` (COUP_MASTER_URL + COUP_MASTER_API_KEY) in the repo
+Put a coup-master `.env` (COUP_MASTER_URL + COUP_MASTER_API_KEY) in the repo
 root, or export those variables. Upload needs the API key.
 
   python scripts/hub.py list

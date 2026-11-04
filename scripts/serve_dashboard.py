@@ -1,4 +1,4 @@
-"""Serve the organizer scoreboard and game playback dashboard.
+"""Serve the scoreboard and game playback dashboard.
 
   python scripts/serve_dashboard.py --results results --port 8765
 
@@ -688,7 +688,7 @@ def make_server(
 
 def main() -> None:
     load_repo_dotenv()
-    parser = argparse.ArgumentParser(description="Serve the Coup organizer dashboard.")
+    parser = argparse.ArgumentParser(description="Serve the Coup dashboard.")
     parser.add_argument("--results", type=Path, default=ROOT / "results")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--host", default="127.0.0.1")

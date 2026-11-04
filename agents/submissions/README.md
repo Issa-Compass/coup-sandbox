@@ -10,7 +10,7 @@ agents/submissions/<your-name>/agent.py
 
 1. Copy `agents/template/agent.py` into your folder.
 2. Get `READY` from `python scripts/test_agent.py agents/submissions/<your-name>/agent.py`.
-3. At the event, put the organizers’ `.env` in the repo root (URL + API key).
+3. Put a coup-master `.env` in the repo root (URL + API key; see `.env.example`).
 4. Submit with `python scripts/hub.py upload <your-name> --full-name "Your Full Name"`.
 
 Scratch experiments can also live under `agents/local/` (also gitignored). Scored hand-in is hub upload from this folder.

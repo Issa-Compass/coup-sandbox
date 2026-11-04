@@ -1,6 +1,6 @@
 # Coup rules
 
-This is the base game. No Inquisitor and no Reformation. The hackathon uses **3 to 6 players**. The engine can also play 2, using the variant below. If the rulebook and this file disagree, this file wins, and `tests/test_engine.py` is the check.
+This is the base game. No Inquisitor and no Reformation. Default tables use **3 to 6 players**. The engine can also play 2, using the variant below. If the rulebook and this file disagree, this file wins, and `tests/test_engine.py` is the check.
 
 ## Setup
 
@@ -67,7 +67,7 @@ If the deck somehow has fewer than 2 cards, you draw what is left. In a normal 3
 
 ## Two-player variant
 
-Not used at the hackathon. With exactly 2 players the deck has 2 copies of each character, and each player starts with 1 coin. Everything else is the same.
+Optional 2-player variant. With exactly 2 players the deck has 2 copies of each character, and each player starts with 1 coin. Everything else is the same.
 
 ## Tournament scoring
 

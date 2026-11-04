@@ -10,7 +10,7 @@ One file on disk:
 agents/submissions/<your-name>/agent.py
 ```
 
-That folder is **gitignored**. Do not open a pull request with your bot. At the event, organizers give you a `.env` (coup-master URL + API key). Submit with:
+That folder is **gitignored**. Do not open a pull request with your bot. When you have a coup-master `.env` (URL + API key), submit with:
 
 ```bash
 python scripts/hub.py upload <your-name> --full-name "Your Full Name"
@@ -27,7 +27,7 @@ Do not edit the engine, the examples, or someone else's folder. Do not add depen
 3. Read `RULES.md` once. Then keep `API.md` open.
 4. Run `python scripts/test_agent.py agents/submissions/<your-name>/agent.py` after each change. Stop when it says `READY`.
 5. Watch a game: `python scripts/play.py --agents your-name,honest,bluffer,challenger --seed 1`.
-6. When you have the event `.env`, upload with `scripts/hub.py` (see above). Re-upload replaces your hub entry.
+6. When you have a coup-master `.env`, upload with `scripts/hub.py` (see above). Re-upload replaces your hub entry.
 
 If you want Cursor or Claude to write the first version, paste `AI_PROMPT.md` and put your folder name in the blank.
 
@@ -45,7 +45,7 @@ The example bots are the ladder (shared foundation + tendency knobs in
   still Coups threats and does not free-die to Assassinate on last influence.
 - `challenger` plays honestly and challenges soft claims (not coin-flip early Tax).
 
-You can read their source. Copying `challenger` and changing one number is allowed and will not win the event by itself.
+You can read their source. Copying `challenger` and changing one number is allowed and will not win a tournament by itself.
 
 The scoreboard uses the points in `RULES.md`, not raw wins. At a 6-player table, 1st is worth 6 points (`n` at an `n`-player table) and 2nd is worth 3. A bot that always comes second still beats a bot that wins rarely and otherwise comes last.
 

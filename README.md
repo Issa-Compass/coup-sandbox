@@ -1,10 +1,30 @@
 # Coup sandbox
 
-This is the agent sandbox for the Issa Compass intern hackathon on **Friday 6 November, 1pm, at Cloud 11**. You write a Python program that plays [Coup](https://boardgamegeek.com/boardgame/131357/coup). The engine, the rules, and the opponents are already here. You only edit your agent.
+Sandbox for writing a Python agent that plays [Coup](https://boardgamegeek.com/boardgame/131357/coup). The engine, the rules, and the opponents are already here. You only edit your agent.
 
 You need Python 3.11 or newer. Work through the path below in order.
 
-## 1. Setup
+## 1. Quick start (dashboard)
+
+Creates `.venv` if needed, installs `requirements.txt`, and serves the dashboard.
+
+macOS / Linux:
+
+```bash
+./start.sh
+```
+
+Windows (PowerShell):
+
+```powershell
+.\start.ps1
+```
+
+Open [http://127.0.0.1:8765](http://127.0.0.1:8765). Leave this running in a terminal. After you add or rename an agent folder, restart the server so **Local** refreshes. Optional: `PORT=9000 ./start.sh`.
+
+No `.env` needed for local play, tournaments, or watch. Submit stays disabled until you have a coup-master `.env` (URL + API key) from whoever runs the hub.
+
+## 2. Setup (manual / CLI)
 
 Windows:
 
@@ -26,17 +46,11 @@ python scripts/test_agent.py agents/template/agent.py
 python scripts/play.py --seed 1
 ```
 
-`READY` means the template plays legal moves. It does not mean it plays well. Keep the venv activated for every command below.
-
-## 2. Dashboard
-
-```bash
-python scripts/serve_dashboard.py --port 8765
-```
-
-Open [http://127.0.0.1:8765](http://127.0.0.1:8765). Leave this running in a terminal. After you add or rename an agent folder, restart the server so **Local** refreshes.
+`READY` means the template plays legal moves. It does not mean it plays well. Keep the venv activated for every command below (or use `./start.sh` / `.\start.ps1` for the dashboard).
 
 ## 3. Baseline tournament (example bots)
+
+(If you used `./start.sh` only, activate the venv first: `source .venv/bin/activate` / `.venv\Scripts\activate`.)
 
 Smoke-test the shipped ladder (`random`, `honest`, `bluffer`, `challenger`) with no custom code:
 
@@ -96,7 +110,7 @@ cp agents/local/your-name/agent.py agents/submissions/your-name/agent.py
 python scripts/test_agent.py agents/submissions/your-name/agent.py
 ```
 
-2. At the event, organizers hand you a `.env` (coup-master URL + API key). Put it in the repo root (or fill [`.env.example`](.env.example)).
+2. Put a coup-master `.env` in the repo root (URL + API key; see [`.env.example`](.env.example)).
 
 3. Upload:
 
@@ -111,7 +125,7 @@ A real full name (at least two names) is required. Names: `A–Z a–z 0–9 _ -
 - [`CANDIDATE_GUIDE.md`](CANDIDATE_GUIDE.md) — what “good” looks like and how scoring works
 - [`RULES.md`](RULES.md) — rulebook (`tests/test_engine.py` enforces it)
 - [`API.md`](API.md) — every type and method your agent may use
-- [`ORGANIZER_GUIDE.md`](ORGANIZER_GUIDE.md) — staff running the event
+- [`ORGANIZER_GUIDE.md`](ORGANIZER_GUIDE.md) — running a tournament / hub
 - [`agents/local/README.md`](agents/local/README.md) — local agents short reference
 
 ## What is in the repo
@@ -124,9 +138,10 @@ A real full name (at least two names) is required. Names: `A–Z a–z 0–9 _ -
 | `agents/examples/` | `random`, `honest`, `bluffer`, `challenger` |
 | `agents/local/` | Scratch agents (gitignored) |
 | `agents/submissions/` | Scored agent on disk (gitignored). Upload via hub |
-| `.env.example` | Template for the in-person coup-master `.env` |
+| `.env.example` | Template for the coup-master `.env` |
 | `scripts/test_agent.py` | Ready check before you submit |
 | `scripts/hub.py` | Upload / list / download via coup-master |
+| `start.sh` / `start.ps1` | Create venv, install deps, run dashboard |
 | `scripts/serve_dashboard.py` | Local dashboard |
 | `scripts/tournament.py` | A round and a leaderboard |
 | `scripts/play.py` | One printed game |

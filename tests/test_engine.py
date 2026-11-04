@@ -321,7 +321,7 @@ def test_turn_cap_ranks_survivors_by_influence_then_coins_then_seat():
     assert [item.points for item in game.result().placements] == [3, 0, 0]
 
 
-def test_six_player_points_match_the_event_table():
+def test_six_player_points_match_placement_table():
     assert [placement_points(place, 6) for place in range(1, 7)] == [6, 3, 2, 1, 0, 0]
     assert [placement_points(place, 5) for place in range(1, 6)] == [5, 2, 1, 0, 0]
     assert [placement_points(place, 4) for place in range(1, 5)] == [4, 1, 0, 0]

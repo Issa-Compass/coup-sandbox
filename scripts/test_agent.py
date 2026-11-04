@@ -1,4 +1,4 @@
-"""Check an agent the way the event will.
+"""Check an agent the way a scored round will.
 
 Exit 0 and print READY when the file is legal. Win rate is informational.
 

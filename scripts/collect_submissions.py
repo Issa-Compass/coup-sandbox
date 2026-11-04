@@ -1,6 +1,6 @@
 """Download approved hub agents into agents/submissions/ for a tournament round.
 
-Requires the in-person `.env` (COUP_MASTER_URL). API key is not required to list
+Requires a coup-master `.env` (COUP_MASTER_URL). API key is not required to list
 or download approved agents.
 
   python scripts/collect_submissions.py
