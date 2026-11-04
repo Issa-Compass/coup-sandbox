@@ -88,10 +88,15 @@ class SessionController:
             return dict(self.state)
 
     def start(self, payload: dict[str, Any]) -> dict[str, Any]:
+        # Reject early without holding the lock across hub downloads.
         with self.lock:
             if self.state["status"] == "running":
                 raise ValueError("a session is already running")
-            config = _parse_session_config(payload, hub_base=self.hub_base)
+        # Resolve / download agents outside the lock so /api/session stays responsive.
+        config = _parse_session_config(payload, hub_base=self.hub_base)
+        with self.lock:
+            if self.state["status"] == "running":
+                raise ValueError("a session is already running")
             self._cancel = False
             self.state = {
                 "status": "running",
@@ -123,7 +128,7 @@ class SessionController:
     def _run(self, config: dict[str, Any]) -> None:
         try:
             aliases = list(config["agents"])
-            paths = [_ensure_agent(alias, hub_base=self.hub_base) for alias in aliases]
+            paths = list(config["paths"])
             seat_names = [display_name_for_token(alias) for alias in aliases]
             for index, round_cfg in enumerate(config["rounds"]):
                 if self._should_stop():
@@ -208,13 +213,21 @@ class ManualController:
 
     def start(self, payload: dict[str, Any]) -> dict[str, Any]:
         with self.lock:
+            busy = (
+                self._game is not None
+                and self._game.snapshot().status in ("waiting", "thinking")
+            )
+            if busy:
+                raise ValueError("a manual game is already in progress — stop it first")
+        # Resolve / download opponents outside the lock (hub I/O).
+        config = _parse_manual_config(payload, hub_base=self.hub_base)
+        with self.lock:
             if self._game is not None:
                 status = self._game.snapshot().status
                 if status in ("waiting", "thinking"):
                     raise ValueError("a manual game is already in progress — stop it first")
                 self._game.close()
                 self._game = None
-            config = _parse_manual_config(payload, hub_base=self.hub_base)
             players = [
                 open_player(path, name, sandbox=False, timeout=config["timeout"])
                 for path, name in zip(config["paths"], config["seat_names"])
@@ -816,21 +829,27 @@ def _agents_with_hub(hub_base: str) -> list[dict[str, str]]:
     return [*examples, *locals_, *submitted]
 
 
-def _ensure_agent(token: str, *, hub_base: str = "") -> Path:
-    """Resolve a catalog token to a file; download hub arena agents into submissions."""
+def _ensure_agent(token: str, *, hub_base: str = "", refresh: bool = False) -> Path:
+    """Resolve a catalog token to a file; download hub arena agents into submissions.
+
+    Cached ``agents/submissions/<name>/agent.py`` is reused unless ``refresh`` is set,
+    so starting a tournament does not re-hit the hub on every Run.
+    """
 
     hub_name = arena_name(token)
     if hub_name is not None:
         if not SAFE_HUB_NAME.fullmatch(hub_name):
             raise FileNotFoundError(f"no agent {token!r}")
+        dest = SUBMISSIONS / hub_name / "agent.py"
         if hub_base:
+            if not refresh and dest.is_file() and dest.stat().st_size > 0:
+                return dest
             try:
-                return download_agent(
-                    hub_name,
-                    SUBMISSIONS / hub_name / "agent.py",
-                    base_url=hub_base,
-                )
+                return download_agent(hub_name, dest, base_url=hub_base)
             except HubError as exc:
+                # Stale cache is better than failing mid-start when the hub blips.
+                if dest.is_file() and dest.stat().st_size > 0:
+                    return dest
                 raise FileNotFoundError(f"no arena agent {hub_name!r} on hub: {exc}") from exc
         return resolve_agent(token)
 
@@ -882,14 +901,16 @@ def _parse_session_config(payload: dict[str, Any], *, hub_base: str = "") -> dic
     if not isinstance(agents, list) or len(agents) < 2:
         raise ValueError("select at least 2 agents")
     cleaned_agents: list[str] = []
+    paths: list[Path] = []
     for item in agents:
         if not isinstance(item, str) or not SAFE_AGENT.fullmatch(item):
             raise ValueError(f"invalid agent id: {item!r}")
         try:
-            _ensure_agent(item, hub_base=hub_base)
+            path = _ensure_agent(item, hub_base=hub_base)
         except FileNotFoundError as exc:
             raise ValueError(str(exc)) from exc
         cleaned_agents.append(item)
+        paths.append(path)
 
     rounds_raw = payload.get("rounds")
     if not isinstance(rounds_raw, list) or not rounds_raw:
@@ -931,6 +952,7 @@ def _parse_session_config(payload: dict[str, Any], *, hub_base: str = "") -> dic
 
     return {
         "agents": cleaned_agents,
+        "paths": paths,
         "rounds": rounds,
         "run_id": run_id,
         "seed": seed,

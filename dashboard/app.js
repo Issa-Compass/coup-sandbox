@@ -137,6 +137,8 @@ const state = {
   setupMenuOpen: false,
   setup: defaultSetup(),
   setupError: null,
+  setupStarting: false, // Run/Play request in flight — blocks remount races
+  sessionErrorHidden: false, // user dismissed a failed-session banner
   rulesOpen: false,
   rulesText: null,
   copyFlash: null,
@@ -277,6 +279,8 @@ const app = document.getElementById("app");
 
 async function init() {
   window.addEventListener("hashchange", () => route());
+  // Survive innerHTML remounts (loadAgents / boot / live poll) so Run clicks are not dropped.
+  bindAppDelegates();
   const hasDeepLink = Boolean(location.hash.replace(/^#\/?/, "").trim());
 
   // Cold start with no hash: open an empty tournament draft immediately.
@@ -294,7 +298,36 @@ async function init() {
   boot.then(() => {
     ensureRunInList(state.runId);
     syncLivePolling();
-    render();
+    // Avoid wiping the setup DOM mid-click / mid-start.
+    if (!state.setupStarting) render();
+  });
+}
+
+/** One-shot delegated handlers on #app — remount-safe. */
+function bindAppDelegates() {
+  if (app.dataset.delegatesBound === "1") return;
+  app.dataset.delegatesBound = "1";
+  app.addEventListener("click", (event) => {
+    const start = event.target.closest("#start-session");
+    if (start) {
+      event.preventDefault();
+      if (start.disabled || state.setupStarting) return;
+      if (state.setupMode === "manual") startManualGame();
+      else startSession();
+      return;
+    }
+    const dismiss = event.target.closest("#dismiss-session-error");
+    if (dismiss) {
+      event.preventDefault();
+      state.sessionErrorHidden = true;
+      render();
+      return;
+    }
+    const stop = event.target.closest("#stop-session");
+    if (stop) {
+      event.preventDefault();
+      stopSession();
+    }
   });
 }
 
@@ -359,11 +392,16 @@ async function refreshLive() {
   liveInFlight = true;
   try {
     const wasLive = sessionIsLive();
+    const prevStatus = state.session?.status;
     const prevGame = state.session?.current_game;
     const prevMessage = state.session?.message;
     const prevGamesLen = state.games.length;
     await loadSession({ quiet: true });
     const live = sessionIsLive();
+    if (state.session?.status === "running") state.sessionErrorHidden = false;
+    if (state.session?.status === "error" && prevStatus === "running") {
+      state.sessionErrorHidden = false;
+    }
     const sameRun = state.session?.run_id && state.session.run_id === state.runId;
 
     if (sameRun) {
@@ -780,7 +818,18 @@ function renderChrome(title, subtitle, extra = "") {
 
 function renderSessionBanner() {
   const session = state.session;
-  if (!session || session.status !== "running") return "";
+  if (!session) return "";
+  if (session.status === "error" && !state.sessionErrorHidden) {
+    const detail = session.error || session.message || "Tournament failed";
+    return `<div class="session-live-banner is-error">
+      <div class="session-live-text">
+        <strong>Tournament failed</strong>
+        <span class="muted">${escapeHtml(detail)}</span>
+      </div>
+      <button class="btn" type="button" id="dismiss-session-error">Dismiss</button>
+    </div>`;
+  }
+  if (session.status !== "running") return "";
   if (session.run_id && state.runId && session.run_id !== state.runId) {
     return `<div class="session-live-banner">
       <div class="session-live-dot" aria-hidden="true"></div>
@@ -789,6 +838,7 @@ function renderSessionBanner() {
         <span class="muted">${escapeHtml(session.message || session.run_id)}</span>
       </div>
       <a class="btn" href="#/games/${encodeURIComponent(session.run_id)}/${session.current_round || 1}">Watch</a>
+      <button class="btn" type="button" id="stop-session">Stop</button>
     </div>`;
   }
   const round = session.current_round;
@@ -807,6 +857,7 @@ function renderSessionBanner() {
         ? `<a class="btn" href="#/games/${encodeURIComponent(state.runId)}/${round}">Watch games</a>`
         : ""
     }
+    <button class="btn" type="button" id="stop-session">Stop</button>
   </div>`;
 }
 
@@ -1170,11 +1221,16 @@ function renderSetup() {
           </div>
           ${gamesField}
         </div>
+        ${
+          !manual && sessionIsLive()
+            ? `<div class="session-error">A tournament is already running — Stop it in the banner, or wait for it to finish.</div>`
+            : ""
+        }
         ${state.setupError ? `<div class="session-error">${escapeHtml(state.setupError)}</div>` : ""}
         <div class="controls">
           <button class="btn primary" type="button" id="start-session" ${
-            !manual && sessionIsLive() ? "disabled" : ""
-          }>${manual ? "Play" : "Run"}</button>
+            state.setupStarting || (!manual && sessionIsLive()) ? "disabled" : ""
+          }>${state.setupStarting ? "Starting…" : manual ? "Play" : "Run"}</button>
           <button class="btn" type="button" id="close-setup">Close</button>
         </div>
       </div>
@@ -2780,6 +2836,12 @@ function hydrateSetupAgentsFromRun() {
   }
 }
 
+function agentCatalogFingerprint() {
+  return availableAgents()
+    .map((agent) => `${agent.id}:${agent.kind}:${agent.full_name || ""}`)
+    .join("|");
+}
+
 async function openTournamentSetup() {
   state.setupMode = "tournament";
   state.setupOpen = true;
@@ -2787,8 +2849,17 @@ async function openTournamentSetup() {
   state.setupError = null;
   render();
   // Hub approvals land after upload; refresh so Submitted picks up coup-master.
+  const before = agentCatalogFingerprint();
   await loadAgents({ quiet: true });
-  if (state.setupOpen && state.setupMode === "tournament") render();
+  // Skip remount when nothing changed or Run is already in flight (click survival).
+  if (
+    state.setupOpen &&
+    state.setupMode === "tournament" &&
+    !state.setupStarting &&
+    agentCatalogFingerprint() !== before
+  ) {
+    render();
+  }
 }
 
 function tournamentDraftPending() {
@@ -2982,10 +3053,7 @@ function bindSetup() {
       }
     });
   }
-  document.getElementById("start-session")?.addEventListener("click", () => {
-    if (manual) startManualGame();
-    else startSession();
-  });
+  // #start-session is handled by bindAppDelegates (remount-safe).
 }
 
 function addManualOpponents(ids) {
@@ -3021,6 +3089,7 @@ async function openManualSetup() {
 }
 
 async function startManualGame() {
+  if (state.setupStarting) return;
   state.setupError = null;
   readSetupFieldsFromDom();
   if (state.setup.agents.length < 1) {
@@ -3048,8 +3117,10 @@ async function startManualGame() {
     timeout: Number(state.setup.timeout) || 1,
   };
   try {
+    state.setupStarting = true;
     state.manualBusy = true;
     state.manualError = null;
+    render();
     state.manual = await fetchJson("/api/manual/start", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -3059,6 +3130,7 @@ async function startManualGame() {
     state.setupOpen = false;
     state.setupMenuOpen = false;
     state.manualBusy = false;
+    state.setupStarting = false;
     if (location.hash === "#/manual") {
       state.view = "manual";
       render();
@@ -3067,6 +3139,7 @@ async function startManualGame() {
     }
   } catch (err) {
     state.manualBusy = false;
+    state.setupStarting = false;
     state.setupError = err.message || String(err);
     render();
   }
@@ -3081,9 +3154,30 @@ async function loadManual({ quiet = false } = {}) {
   }
 }
 
+async function stopSession() {
+  try {
+    state.session = await fetchJson("/api/session/stop", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+  } catch (err) {
+    console.error(err);
+  }
+  await loadSession({ quiet: true });
+  syncLivePolling();
+  render();
+}
+
 async function startSession() {
+  if (state.setupStarting) return;
   state.setupError = null;
   readSetupFieldsFromDom();
+  if (sessionIsLive()) {
+    state.setupError = "A tournament is already running — Stop it first, or wait.";
+    render();
+    return;
+  }
   if (state.setup.agents.length < 2) {
     state.setupError = "Pick at least 2 agents.";
     render();
@@ -3117,16 +3211,29 @@ async function startSession() {
     force: true,
   };
   try {
+    state.setupStarting = true;
+    state.sessionErrorHidden = false;
     state.followPlay = true;
+    render();
     state.session = await fetchJson("/api/session/start", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
-    // Start returns a "running" snapshot; fast rounds may already be done.
+    // Start returns a "running" snapshot; fast rounds may already be done or failed.
     await loadSession({ quiet: true });
+    if (state.session?.status === "error") {
+      state.setupStarting = false;
+      state.followPlay = false;
+      state.setupOpen = true;
+      state.setupError = state.session.error || state.session.message || "Tournament failed";
+      syncLivePolling();
+      render();
+      return;
+    }
     state.setupOpen = false;
     state.setupMenuOpen = false;
+    state.setupStarting = false;
     state.runId = state.session?.run_id || state.runId;
     state.round = state.session?.current_round || roundNumber;
     ensureRunInList(state.runId);
@@ -3144,9 +3251,18 @@ async function startSession() {
     if (!sessionIsLive()) {
       await loadRuns({ quiet: true });
       await loadGames({ quiet: true });
+      // Failed after navigate — reopen setup with the error.
+      if (state.session?.status === "error") {
+        state.followPlay = false;
+        state.setupOpen = true;
+        state.setupError = state.session.error || state.session.message || "Tournament failed";
+        render();
+        return;
+      }
       if (!armFollowPlay()) render();
     }
   } catch (err) {
+    state.setupStarting = false;
     state.followPlay = false;
     await loadSession({ quiet: true });
     syncLivePolling();

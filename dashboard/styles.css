@@ -1836,6 +1836,15 @@ table.board tbody tr:hover {
   border-radius: 4px;
 }
 
+.session-live-banner.is-error {
+  background: rgba(180, 40, 40, 0.18);
+  border-color: rgba(220, 80, 80, 0.55);
+}
+
+.session-live-banner.is-error .session-live-text strong {
+  color: var(--red, #e85d5d);
+}
+
 .session-live-dot {
   width: 0.55rem;
   height: 0.55rem;

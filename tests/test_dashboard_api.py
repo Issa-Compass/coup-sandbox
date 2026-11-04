@@ -391,6 +391,129 @@ def test_upload_requires_full_name(dashboard_with_hub):
     assert uploads == []
 
 
+def test_session_start_and_reject_concurrent(dashboard):
+    base, results = dashboard
+    status, body = _post(
+        base,
+        "/api/session/start",
+        {
+            "agents": ["random", "honest"],
+            "rounds": [{"number": 1, "games_per_agent": 40}],
+            "seed": 7,
+            "timeout": 1,
+            "table_size": 2,
+            "sandbox": False,
+            "force": True,
+            "run_id": "api-session-test",
+        },
+    )
+    assert status == 200, body
+    assert body["status"] == "running"
+    assert body["run_id"] == "api-session-test"
+
+    status2, body2 = _post(
+        base,
+        "/api/session/start",
+        {
+            "agents": ["random", "bluffer"],
+            "rounds": [{"number": 1, "games_per_agent": 1}],
+            "seed": 1,
+            "force": True,
+            "run_id": "api-session-test-2",
+        },
+    )
+    assert status2 == 400
+    assert "already running" in body2["error"]
+
+    # Wait for the long-ish round to finish (or stop it).
+    _post(base, "/api/session/stop", {})
+    for _ in range(100):
+        status, snap = _get(base, "/api/session")
+        assert status == 200
+        if snap["status"] != "running":
+            break
+        import time
+
+        time.sleep(0.05)
+    assert snap["status"] in ("stopped", "done", "error"), snap
+    assert (results / "api-session-test").is_dir() or snap["status"] == "stopped"
+
+
+def test_ensure_agent_reuses_hub_cache(dashboard_with_hub, tmp_path, monkeypatch):
+    """Arena downloads hit the hub once; later resolves use the on-disk cache."""
+    _base, _uploads, master_url = dashboard_with_hub
+    import coup.runner.catalog as catalog
+
+    submissions = tmp_path / "submissions"
+    monkeypatch.setattr(catalog, "SUBMISSIONS", submissions)
+    monkeypatch.setattr(dash, "SUBMISSIONS", submissions)
+
+    calls: list[str] = []
+    real_download = dash.download_agent
+
+    def counting_download(name, dest, **kwargs):
+        calls.append(name)
+        return real_download(name, dest, **kwargs)
+
+    monkeypatch.setattr(dash, "download_agent", counting_download)
+
+    path1 = dash._ensure_agent("arena:hub_bot", hub_base=master_url)
+    path2 = dash._ensure_agent("arena:hub_bot", hub_base=master_url)
+    path3 = dash._ensure_agent("arena:hub_bot", hub_base=master_url, refresh=True)
+
+    assert path1 == path2 == path3
+    assert path1.is_file()
+    assert calls == ["hub_bot", "hub_bot"]  # cold + refresh; middle call cached
+
+
+def test_session_start_uses_cached_paths_not_redownload(dashboard_with_hub, tmp_path, monkeypatch):
+    """Session start resolves agents once; the worker must not download again."""
+    base, _uploads, master_url = dashboard_with_hub
+    import coup.runner.catalog as catalog
+
+    submissions = tmp_path / "submissions"
+    monkeypatch.setattr(catalog, "SUBMISSIONS", submissions)
+    monkeypatch.setattr(dash, "SUBMISSIONS", submissions)
+
+    # Seed cache so start does not need the hub for hub_bot.
+    cached = submissions / "hub_bot" / "agent.py"
+    cached.parent.mkdir(parents=True)
+    cached.write_text(GOOD, encoding="utf-8")
+
+    calls: list[str] = []
+
+    def counting_download(name, dest, **kwargs):
+        calls.append(name)
+        raise AssertionError("download_agent should not run when cache exists")
+
+    monkeypatch.setattr(dash, "download_agent", counting_download)
+
+    status, body = _post(
+        base,
+        "/api/session/start",
+        {
+            "agents": ["arena:hub_bot", "random"],
+            "rounds": [{"number": 1, "games_per_agent": 1}],
+            "seed": 3,
+            "timeout": 1,
+            "table_size": 2,
+            "sandbox": False,
+            "force": True,
+            "run_id": "cache-session-test",
+        },
+    )
+    assert status == 200, body
+    for _ in range(100):
+        _st, snap = _get(base, "/api/session")
+        if snap["status"] != "running":
+            break
+        import time
+
+        time.sleep(0.05)
+    assert snap["status"] == "done", snap
+    assert calls == []
+
+
 def test_manual_play_human_vs_agents(dashboard):
     base, _ = dashboard
     status, idle = _get(base, "/api/manual")
