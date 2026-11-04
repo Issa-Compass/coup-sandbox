@@ -82,7 +82,7 @@ def test_example_bots_finish_and_replay():
     def run(seed: int) -> list[str]:
         players = [
             open_player(EXAMPLES[alias], alias, sandbox=False, timeout=1)
-            for alias in ("random", "honest", "knife", "turtle", "greedy")
+            for alias in ("random", "honest", "guard", "turtle", "greedy")
         ]
         played = play_game(players, seed=seed, max_turns=50)
         assert played.game.card_counts()
@@ -243,7 +243,7 @@ def test_list_available_agents_includes_examples():
     agents = list_available_agents()
     ids = [row["id"] for row in agents]
     assert ids[:4] == ["random", "honest", "bluffer", "challenger"]
-    assert "knife" in ids and "turtle" in ids and "greedy" in ids
+    assert "guard" in ids and "turtle" in ids and "greedy" in ids
     assert "template" not in ids
     for row in agents:
         if row["kind"] == "local":
@@ -292,31 +292,31 @@ def test_list_available_agents_local_and_base_same_name_are_distinct(tmp_path: P
     root = tmp_path
     examples_dir = root / "agents" / "examples"
     examples_dir.mkdir(parents=True)
-    knife_example = examples_dir / "knife_bot.py"
-    knife_example.write_text("# example knife\n")
+    guard_example = examples_dir / "guard_bot.py"
+    guard_example.write_text("# example guard\n")
     local_root = root / "agents" / "local"
-    local_knife = local_root / "knife" / "agent.py"
-    local_knife.parent.mkdir(parents=True)
-    local_knife.write_text("# local knife\n")
+    local_guard = local_root / "guard" / "agent.py"
+    local_guard.parent.mkdir(parents=True)
+    local_guard.write_text("# local guard\n")
     monkeypatch.setattr(catalog, "ROOT", root)
     monkeypatch.setattr(catalog, "LOCAL", local_root)
     monkeypatch.setattr(catalog, "SUBMISSIONS", root / "agents" / "submissions")
     monkeypatch.setattr(
         catalog,
         "EXAMPLES",
-        {"knife": knife_example},
+        {"guard": guard_example},
     )
 
     agents = catalog.list_available_agents()
     by_id = {row["id"]: row for row in agents}
-    assert by_id["knife"]["kind"] == "example"
-    assert by_id["knife"]["path"] == "agents/examples/knife_bot.py"
-    assert by_id["local:knife"]["kind"] == "local"
-    assert by_id["local:knife"]["name"] == "knife"
-    assert by_id["local:knife"]["path"] == "agents/local/knife/agent.py"
-    assert catalog.resolve_agent("knife") == knife_example
-    assert catalog.resolve_agent("local:knife") == local_knife
-    assert catalog.display_name_for_token("local:knife") == "knife"
+    assert by_id["guard"]["kind"] == "example"
+    assert by_id["guard"]["path"] == "agents/examples/guard_bot.py"
+    assert by_id["local:guard"]["kind"] == "local"
+    assert by_id["local:guard"]["name"] == "guard"
+    assert by_id["local:guard"]["path"] == "agents/local/guard/agent.py"
+    assert catalog.resolve_agent("guard") == guard_example
+    assert catalog.resolve_agent("local:guard") == local_guard
+    assert catalog.display_name_for_token("local:guard") == "guard"
 
 
 def test_local_and_arena_same_name_are_distinct(tmp_path: Path, monkeypatch):

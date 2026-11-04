@@ -52,7 +52,7 @@ python scripts/play.py --seed 1
 
 (If you used `./start.sh` only, activate the venv first: `source .venv/bin/activate` / `.venv\Scripts\activate`.)
 
-Smoke-test the shipped ladder (`random`, `honest`, `knife`, `turtle`, `greedy`) with no custom code:
+Smoke-test the shipped ladder (`random`, `honest`, `guard`, `turtle`, `greedy`) with no custom code:
 
 ```bash
 python scripts/tournament.py --round 1 --games-per-agent 4 --no-sandbox --run-id examples-demo --force
@@ -90,8 +90,8 @@ Stop when it prints `READY`. Skim [`RULES.md`](RULES.md) once; keep [`API.md`](A
 ## 6. Test your agent in a tournament
 
 ```bash
-python scripts/play.py --agents your-name,honest,knife,turtle,greedy --seed 1
-python scripts/tournament.py --round 1 --agents your-name random honest knife turtle greedy --games-per-agent 4 --no-sandbox --run-id local-demo --force
+python scripts/play.py --agents your-name,honest,guard,turtle,greedy --seed 1
+python scripts/tournament.py --round 1 --agents your-name random honest guard turtle greedy --games-per-agent 4 --no-sandbox --run-id local-demo --force
 ```
 
 Or in the dashboard: **Play Games** → **Local** → add your agent (or **Add all**) with the examples → run a session → **Games** → **Watch**.
@@ -153,7 +153,7 @@ You are never told who is who by submission name in a scored run. Infer strategi
 | `coup/agent_api.py` | The only `coup` module your agent may import |
 | `coup/engine/` | Rules and hidden game state. Do not import this |
 | `agents/template/agent.py` | Legal starter. Copy it |
-| `agents/examples/` | `random`, `honest`, `knife`, `turtle`, `greedy` (plus `bluffer`, `challenger`) |
+| `agents/examples/` | `random`, `honest`, `guard`, `turtle`, `greedy` (plus `bluffer`, `challenger`) |
 | `agents/local/` | Scratch agents (gitignored) |
 | `agents/submissions/` | Scored agent on disk (gitignored). Upload via hub |
 | `.env.example` | Template for the coup-master `.env` |

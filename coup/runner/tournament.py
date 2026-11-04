@@ -33,11 +33,11 @@ def default_agent_paths(explicit: list[str] | None, with_examples: bool) -> list
         if with_examples:
             paths.extend(
                 EXAMPLES[name]
-                for name in ("random", "honest", "knife", "turtle", "greedy")
+                for name in ("random", "honest", "guard", "turtle", "greedy")
             )
         return paths
     return [
-        EXAMPLES[name] for name in ("random", "honest", "knife", "turtle", "greedy")
+        EXAMPLES[name] for name in ("random", "honest", "guard", "turtle", "greedy")
     ]
 
 

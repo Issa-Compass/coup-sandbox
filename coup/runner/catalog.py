@@ -11,7 +11,7 @@ EXAMPLES = {
     "honest": ROOT / "agents" / "examples" / "honest_bot.py",
     "bluffer": ROOT / "agents" / "examples" / "bluffer_bot.py",
     "challenger": ROOT / "agents" / "examples" / "challenger_bot.py",
-    "knife": ROOT / "agents" / "examples" / "knife_bot.py",
+    "guard": ROOT / "agents" / "examples" / "guard_bot.py",
     "turtle": ROOT / "agents" / "examples" / "turtle_bot.py",
     "greedy": ROOT / "agents" / "examples" / "greedy_bot.py",
 }

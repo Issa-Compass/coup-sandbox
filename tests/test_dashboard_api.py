@@ -243,7 +243,7 @@ def test_base_and_local_same_name_coexist(dashboard, tmp_path, monkeypatch):
     import coup.runner.catalog as catalog
 
     local_root = tmp_path / "local"
-    bot = local_root / "knife" / "agent.py"
+    bot = local_root / "guard" / "agent.py"
     bot.parent.mkdir(parents=True)
     bot.write_text(GOOD, encoding="utf-8")
     monkeypatch.setattr(catalog, "LOCAL", local_root)
@@ -253,9 +253,9 @@ def test_base_and_local_same_name_coexist(dashboard, tmp_path, monkeypatch):
     status, body = _get(base, "/api/agents")
     assert status == 200
     by_id = {row["id"]: row for row in body["agents"]}
-    assert by_id["knife"]["kind"] == "example"
-    assert by_id["local:knife"]["kind"] == "local"
-    assert by_id["local:knife"]["name"] == "knife"
+    assert by_id["guard"]["kind"] == "example"
+    assert by_id["local:guard"]["kind"] == "local"
+    assert by_id["local:guard"]["name"] == "guard"
 
 
 def test_validate_template_ready(dashboard):
@@ -462,7 +462,7 @@ def test_session_start_and_reject_concurrent(dashboard):
 def test_session_start_writes_roster_and_run_api_returns_it(dashboard):
     """Another round needs durable catalog tokens — not standings seat names."""
     base, results = dashboard
-    agents = ["random", "honest", "knife"]
+    agents = ["random", "honest", "guard"]
     status, body = _post(
         base,
         "/api/session/start",
