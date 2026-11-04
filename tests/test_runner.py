@@ -286,6 +286,39 @@ def test_list_available_agents_includes_indexed_local(tmp_path: Path, monkeypatc
     ]
 
 
+def test_list_available_agents_local_and_base_same_name_are_distinct(tmp_path: Path, monkeypatch):
+    import coup.runner.catalog as catalog
+
+    root = tmp_path
+    examples_dir = root / "agents" / "examples"
+    examples_dir.mkdir(parents=True)
+    knife_example = examples_dir / "knife_bot.py"
+    knife_example.write_text("# example knife\n")
+    local_root = root / "agents" / "local"
+    local_knife = local_root / "knife" / "agent.py"
+    local_knife.parent.mkdir(parents=True)
+    local_knife.write_text("# local knife\n")
+    monkeypatch.setattr(catalog, "ROOT", root)
+    monkeypatch.setattr(catalog, "LOCAL", local_root)
+    monkeypatch.setattr(catalog, "SUBMISSIONS", root / "agents" / "submissions")
+    monkeypatch.setattr(
+        catalog,
+        "EXAMPLES",
+        {"knife": knife_example},
+    )
+
+    agents = catalog.list_available_agents()
+    by_id = {row["id"]: row for row in agents}
+    assert by_id["knife"]["kind"] == "example"
+    assert by_id["knife"]["path"] == "agents/examples/knife_bot.py"
+    assert by_id["local:knife"]["kind"] == "local"
+    assert by_id["local:knife"]["name"] == "knife"
+    assert by_id["local:knife"]["path"] == "agents/local/knife/agent.py"
+    assert catalog.resolve_agent("knife") == knife_example
+    assert catalog.resolve_agent("local:knife") == local_knife
+    assert catalog.display_name_for_token("local:knife") == "knife"
+
+
 def test_local_and_arena_same_name_are_distinct(tmp_path: Path, monkeypatch):
     import coup.runner.catalog as catalog
 
@@ -310,6 +343,7 @@ def test_local_and_arena_same_name_are_distinct(tmp_path: Path, monkeypatch):
     assert catalog.resolve_agent("milo") == local_bot
     assert catalog.resolve_agent("arena:milo") == arena_bot
     assert catalog.display_name_for_token("arena:milo") == "milo"
+    assert catalog.display_name_for_token("local:milo") == "milo"
 
 
 def test_unique_instance_names_suffixes_duplicates():

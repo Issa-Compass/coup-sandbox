@@ -238,6 +238,26 @@ def test_hub_and_local_same_name_coexist(dashboard_with_hub, tmp_path, monkeypat
     assert by_id["arena:hub_bot"]["name"] == "hub_bot"
 
 
+def test_base_and_local_same_name_coexist(dashboard, tmp_path, monkeypatch):
+    """Local folder reusing a base alias stays selectable as local:<name>."""
+    import coup.runner.catalog as catalog
+
+    local_root = tmp_path / "local"
+    bot = local_root / "knife" / "agent.py"
+    bot.parent.mkdir(parents=True)
+    bot.write_text(GOOD, encoding="utf-8")
+    monkeypatch.setattr(catalog, "LOCAL", local_root)
+    monkeypatch.setattr(catalog, "SUBMISSIONS", tmp_path / "submissions")
+
+    base, _ = dashboard
+    status, body = _get(base, "/api/agents")
+    assert status == 200
+    by_id = {row["id"]: row for row in body["agents"]}
+    assert by_id["knife"]["kind"] == "example"
+    assert by_id["local:knife"]["kind"] == "local"
+    assert by_id["local:knife"]["name"] == "knife"
+
+
 def test_validate_template_ready(dashboard):
     base, _ = dashboard
     status, body = _post(
@@ -437,6 +457,89 @@ def test_session_start_and_reject_concurrent(dashboard):
         time.sleep(0.05)
     assert snap["status"] in ("stopped", "done", "error"), snap
     assert (results / "api-session-test").is_dir() or snap["status"] == "stopped"
+
+
+def test_session_start_writes_roster_and_run_api_returns_it(dashboard):
+    """Another round needs durable catalog tokens — not standings seat names."""
+    base, results = dashboard
+    agents = ["random", "honest", "knife"]
+    status, body = _post(
+        base,
+        "/api/session/start",
+        {
+            "agents": agents,
+            "rounds": [{"number": 1, "games_per_agent": 1}],
+            "seed": 11,
+            "timeout": 1,
+            "table_size": 3,
+            "sandbox": False,
+            "force": True,
+            "run_id": "roster-persist-test",
+        },
+    )
+    assert status == 200, body
+
+    roster_path = results / "roster-persist-test" / "roster.json"
+    assert roster_path.is_file()
+    roster = json.loads(roster_path.read_text(encoding="utf-8"))
+    assert roster["agents"] == agents
+
+    for _ in range(100):
+        _st, snap = _get(base, "/api/session")
+        if snap["status"] != "running":
+            break
+        import time
+
+        time.sleep(0.05)
+    assert snap["status"] == "done", snap
+
+    status, meta = _get(base, "/api/runs/roster-persist-test")
+    assert status == 200, meta
+    assert meta["run_id"] == "roster-persist-test"
+    assert meta["agents"] == agents
+    assert 1 in meta["rounds"]
+
+    status, listing = _get(base, "/api/runs")
+    assert status == 200
+    row = next(run for run in listing["runs"] if run["id"] == "roster-persist-test")
+    assert row["agents"] == agents
+
+    # Second round reuses the same roster tokens (simulates Another round after restart).
+    status, body2 = _post(
+        base,
+        "/api/session/start",
+        {
+            "agents": meta["agents"],
+            "rounds": [{"number": 2, "games_per_agent": 1}],
+            "seed": 12,
+            "timeout": 1,
+            "table_size": 3,
+            "sandbox": False,
+            "force": True,
+            "run_id": "roster-persist-test",
+        },
+    )
+    assert status == 200, body2
+    for _ in range(100):
+        _st, snap2 = _get(base, "/api/session")
+        if snap2["status"] != "running":
+            break
+        import time
+
+        time.sleep(0.05)
+    assert snap2["status"] == "done", snap2
+    assert json.loads(roster_path.read_text(encoding="utf-8"))["agents"] == agents
+    status, meta2 = _get(base, "/api/runs/roster-persist-test")
+    assert status == 200
+    assert meta2["agents"] == agents
+    assert meta2["rounds"] == [1, 2]
+
+
+def test_read_roster_empty_without_file(tmp_path: Path):
+    assert dash._read_roster(tmp_path / "missing-run") == []
+    empty = tmp_path / "empty-run"
+    empty.mkdir()
+    assert dash._read_roster(empty) == []
 
 
 def test_ensure_agent_reuses_hub_cache(dashboard_with_hub, tmp_path, monkeypatch):

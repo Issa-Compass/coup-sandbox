@@ -57,8 +57,8 @@ DASHBOARD = ROOT / "dashboard"
 
 SAFE_RUN = re.compile(r"^[A-Za-z0-9._-]+$")
 SAFE_GAME = re.compile(r"^g\d{4}$")
-# Bare local/example ids, or namespaced arena:<hub_name> (hub names are [A-Za-z0-9_-]+).
-SAFE_AGENT = re.compile(r"^(?:arena:[A-Za-z0-9_-]+|[A-Za-z0-9._-]+)$")
+# Bare local/example ids, or namespaced local:<name> / arena:<hub_name>.
+SAFE_AGENT = re.compile(r"^(?:(?:arena|local):[A-Za-z0-9_-]+|[A-Za-z0-9._-]+)$")
 SAFE_HUB_NAME = re.compile(r"^[A-Za-z0-9_-]+$")
 DEFAULT_VALIDATE_GAMES = 40
 DEFAULT_VALIDATE_SANDBOX_GAMES = 2
@@ -97,6 +97,7 @@ class SessionController:
         with self.lock:
             if self.state["status"] == "running":
                 raise ValueError("a session is already running")
+            _write_roster(self.results / config["run_id"], config["agents"])
             self._cancel = False
             self.state = {
                 "status": "running",
@@ -419,7 +420,14 @@ def make_handler(
                         for path in run_folder.glob("round_*")
                         if path.is_dir() and path.name.split("_", 1)[1].isdigit()
                     )
-                    self._json(200, {"run_id": run_id, "rounds": rounds})
+                    self._json(
+                        200,
+                        {
+                            "run_id": run_id,
+                            "rounds": rounds,
+                            "agents": _read_roster(run_folder),
+                        },
+                    )
                     return
             except ValueError as exc:
                 self._json(400, {"error": str(exc)})
@@ -780,10 +788,10 @@ def _idle_session() -> dict[str, Any]:
 def _agents_with_hub(hub_base: str) -> list[dict[str, str]]:
     """Examples + local + arena from coup-master only (not agents/submissions/).
 
-    Local and arena namespaces are independent: a local ``milo`` and hub ``milo``
-    both appear (ids ``milo`` vs ``arena:milo``). Arena names are unique among
-    arena entries only. Disk under ``agents/submissions/`` is a run-time cache
-    after download — it does not populate The Arena catalog.
+    Namespaces are independent: local ``milo``, base ``knife``, and hub ``milo``
+    can share a display name. Colliding local vs base uses ``local:<name>``;
+    arena always uses ``arena:<name>``. Disk under ``agents/submissions/`` is a
+    run-time cache after download — it does not populate The Arena catalog.
     """
 
     agents = list_available_agents()
@@ -985,6 +993,26 @@ def _safe_game(value: str) -> str:
     return value
 
 
+def _write_roster(run_folder: Path, agents: list[str]) -> None:
+    """Persist catalog agent tokens so Another round can rebuild the field after restart."""
+
+    run_folder.mkdir(parents=True, exist_ok=True)
+    payload = {"agents": list(agents)}
+    (run_folder / "roster.json").write_text(
+        json.dumps(payload, indent=2) + "\n", encoding="utf-8"
+    )
+
+
+def _read_roster(run_folder: Path) -> list[str]:
+    raw = _read_json(run_folder / "roster.json")
+    if not isinstance(raw, dict):
+        return []
+    agents = raw.get("agents")
+    if not isinstance(agents, list):
+        return []
+    return [item for item in agents if isinstance(item, str) and item]
+
+
 def _list_runs(results: Path) -> list[dict]:
     runs = []
     for folder in sorted(results.iterdir(), key=lambda path: path.name, reverse=True):
@@ -1002,6 +1030,7 @@ def _list_runs(results: Path) -> list[dict]:
                 "id": folder.name,
                 "rounds": rounds,
                 "has_standings": (folder / "standings.json").is_file(),
+                "agents": _read_roster(folder),
             }
         )
     return runs
