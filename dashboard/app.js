@@ -41,6 +41,9 @@ const DEFAULT_AGENTS = [
   { id: "honest", name: "honest_bot", kind: "example" },
   { id: "bluffer", name: "bluffer_bot", kind: "example" },
   { id: "challenger", name: "challenger_bot", kind: "example" },
+  { id: "knife", name: "knife_bot", kind: "example" },
+  { id: "turtle", name: "turtle_bot", kind: "example" },
+  { id: "greedy", name: "greedy_bot", kind: "example" },
 ];
 
 function defaultSetup() {
@@ -244,6 +247,9 @@ const RESERVED_COUP_AI_NAMES = new Set([
   "honest",
   "bluffer",
   "challenger",
+  "knife",
+  "turtle",
+  "greedy",
   "master",
   "sandbox",
   "admin",
@@ -3077,7 +3083,7 @@ async function openManualSetup() {
   state.setupError = null;
   state.submitOpen = false;
   if (!state.setup.agents.length) {
-    state.setup.agents = ["random", "honest", "bluffer"].filter((id) =>
+    state.setup.agents = ["random", "honest", "knife", "turtle", "greedy"].filter((id) =>
       availableAgents().some((agent) => agent.id === id)
     );
   }

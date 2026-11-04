@@ -39,7 +39,9 @@ def main() -> None:
     elif args.submissions:
         paths = submission_agents()
         if args.with_examples:
-            paths = list(paths) + [EXAMPLES[name] for name in ("random", "honest", "bluffer", "challenger")]
+            paths = list(paths) + [
+                EXAMPLES[name] for name in ("random", "honest", "knife", "turtle", "greedy")
+            ]
         if len(paths) < 2:
             print("Need at least 2 agents. Add submissions or pass --with-examples.")
             sys.exit(1)

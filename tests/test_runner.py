@@ -82,7 +82,7 @@ def test_example_bots_finish_and_replay():
     def run(seed: int) -> list[str]:
         players = [
             open_player(EXAMPLES[alias], alias, sandbox=False, timeout=1)
-            for alias in ("random", "honest", "bluffer", "challenger")
+            for alias in ("random", "honest", "knife", "turtle", "greedy")
         ]
         played = play_game(players, seed=seed, max_turns=50)
         assert played.game.card_counts()
@@ -243,6 +243,7 @@ def test_list_available_agents_includes_examples():
     agents = list_available_agents()
     ids = [row["id"] for row in agents]
     assert ids[:4] == ["random", "honest", "bluffer", "challenger"]
+    assert "knife" in ids and "turtle" in ids and "greedy" in ids
     assert "template" not in ids
     for row in agents:
         if row["kind"] == "local":
