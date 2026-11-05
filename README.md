@@ -100,25 +100,23 @@ Edit `agents/local/your-name/agent.py`, re-run `test_agent.py`, then tournament 
 
 ## 7. Submit your agent
 
-Scored hand-in is **hub upload**, not a GitHub PR. `agents/submissions/` is also gitignored.
+Scored hand-in is **hub upload** from the dashboard, not a GitHub PR. Keep iterating under `agents/local/` (gitignored).
 
-1. Copy your bot into the submissions folder (same name you want on the leaderboard):
+1. Put a coup-master `.env` in the repo root (URL + API key; see [`.env.example`](.env.example)) and restart `./start.sh` if it was already running. Hub status in the modal must show ready (local play still works without `.env`).
 
-```bash
-mkdir -p agents/submissions/your-name
-cp agents/local/your-name/agent.py agents/submissions/your-name/agent.py
-python scripts/test_agent.py agents/submissions/your-name/agent.py
-```
+2. In the dashboard: gear menu → **Submit agent**.
 
-2. Put a coup-master `.env` in the repo root (URL + API key; see [`.env.example`](.env.example)).
+3. Under **Your local agents**, pick the bot to upload.
 
-3. Upload:
+4. Enter **Your full name** (first and last — letters, spaces, apostrophes, and hyphens only; no digits).
 
-```bash
-python scripts/hub.py upload your-name --full-name "Ada Lovelace"
-```
+5. Enter **Name of your Coup AI** — public handle on the hub (`A–Z a–z 0–9 _ -` only).
 
-A real full name (at least two words) is required: letters, spaces, apostrophes, and hyphens only — no digits. The **Coup AI** name (`your-name`) uses `A–Z a–z 0–9 _ -` only — that is your public handle. Each browser (or CLI `.coup-player.json`) keeps a stable `player_uid`; re-upload with the same uid **replaces** your one hub entry (clear site data / delete that file for a new uid). Dashboard Submit mints the uid on first open and also saves your Coup AI name + full name in localStorage. `scripts/hub.py list` shows what is already up. Pull someone else’s bot into local with `python scripts/hub.py download other-bot`.
+6. Click **Test locally** and wait for `READY`. Fix issues and test again if needed.
+
+7. Click **Submit to hub**. From the same browser later, use **Update on hub** to replace your entry.
+
+This browser keeps a stable player uid (and remembers your names in localStorage); re-submit with the same uid **replaces** your one hub entry. Clear site data for a new uid. CLI alternative: `python scripts/hub.py upload your-name --full-name "Ada Lovelace"` (from `agents/submissions/`). Pull someone else’s bot with `python scripts/hub.py download other-bot`.
 
 ## Data your agent can analyze
 
@@ -155,7 +153,7 @@ You are never told who is who by submission name in a scored run. Infer strategi
 | `agents/template/agent.py` | Legal starter. Copy it |
 | `agents/examples/` | `random`, `honest`, `guard`, `turtle`, `greedy` (plus `bluffer`, `challenger`) |
 | `agents/local/` | Scratch agents (gitignored) |
-| `agents/submissions/` | Scored agent on disk (gitignored). Upload via hub |
+| `agents/submissions/` | Scored agent on disk (gitignored). Prefer dashboard **Submit agent** |
 | `.env.example` | Template for the coup-master `.env` |
 | `scripts/test_agent.py` | Ready check before you submit |
 | `scripts/hub.py` | Upload / list / download via coup-master |
