@@ -8,8 +8,11 @@ import pytest
 
 from coup.hub_client import (
     HubError,
+    ensure_player_uid,
+    load_player_file,
     load_repo_dotenv,
     new_player_uid,
+    save_player_file,
     validate_full_name,
     validate_local_name,
     validate_player_uid,
@@ -63,3 +66,21 @@ def test_player_uid():
         validate_player_uid("u_" + ("0" * 24))
     with pytest.raises(HubError, match="hex"):
         validate_player_uid("p_ABCDEF0123456789abcdef01")
+
+
+def test_ensure_player_uid_mints_and_reuses(tmp_path):
+    path = tmp_path / ".coup-player.json"
+    assert not path.is_file()
+    first = ensure_player_uid(path=path)
+    validate_player_uid(first)
+    assert path.is_file()
+    assert load_player_file(path)["player_uid"] == first
+    second = ensure_player_uid(path=path)
+    assert second == first
+    explicit = "p_" + ("c" * 24)
+    assert ensure_player_uid(explicit, path=path) == explicit
+    # Explicit does not rewrite the file.
+    assert load_player_file(path)["player_uid"] == first
+    save_player_file({"player_uid": first, "name": "milo"}, path)
+    assert ensure_player_uid(path=path) == first
+    assert load_player_file(path)["name"] == "milo"

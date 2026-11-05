@@ -30,6 +30,7 @@ if str(ROOT) not in sys.path:
 from coup.hub_client import (  # noqa: E402
     HubError,
     download_agent,
+    ensure_player_uid,
     list_remote_agents,
     load_repo_dotenv,
     master_url,
@@ -330,6 +331,9 @@ def make_handler(
                             "master_url": hub or None,
                         },
                     )
+                    return
+                if parts == ["api", "player"]:
+                    self._json(200, {"player_uid": ensure_player_uid()})
                     return
                 if parts == ["api", "hub", "ping"]:
                     self._hub_ping()
@@ -733,10 +737,12 @@ def main() -> None:
     args = parser.parse_args()
     results = args.results.resolve()
     results.mkdir(parents=True, exist_ok=True)
+    player_uid = ensure_player_uid()
     hub_base = (args.master_url or master_url() or "").rstrip("/")
     server = make_server(host=args.host, port=args.port, results=results, hub_base=hub_base)
     hub_note = hub_base or "(unset — /api/hub disabled)"
     print(f"dashboard http://{args.host}:{args.port}  results={results}  master={hub_note}")
+    print(f"player_uid={player_uid}  (.coup-player.json)")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
