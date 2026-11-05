@@ -39,6 +39,7 @@ RESERVED_NAMES = {
 }
 DEFAULT_TIMEOUT = 30.0
 REPO_ROOT = Path(__file__).resolve().parents[1]
+PLAYER_FILE = REPO_ROOT / ".coup-player.json"
 
 
 def load_repo_dotenv(path: Path | None = None) -> None:
@@ -152,6 +153,43 @@ def new_player_uid() -> str:
     """Mint a fresh player uid (p_ + 24 hex)."""
 
     return "p_" + secrets.token_hex(12)
+
+
+def load_player_file(path: Path | None = None) -> dict[str, Any]:
+    """Read `.coup-player.json` (empty dict if missing or invalid)."""
+
+    target = path if path is not None else PLAYER_FILE
+    if not target.is_file():
+        return {}
+    try:
+        raw = json.loads(target.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def save_player_file(data: dict[str, Any], path: Path | None = None) -> None:
+    """Write `.coup-player.json` with stable key order."""
+
+    target = path if path is not None else PLAYER_FILE
+    target.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def ensure_player_uid(explicit: str | None = None, *, path: Path | None = None) -> str:
+    """Return a stable player uid: explicit, file, or newly minted into the file."""
+
+    if explicit:
+        validate_player_uid(explicit)
+        return explicit.strip()
+    stored = load_player_file(path)
+    existing = stored.get("player_uid")
+    if isinstance(existing, str) and existing.strip():
+        validate_player_uid(existing)
+        return existing.strip()
+    uid = new_player_uid()
+    stored["player_uid"] = uid
+    save_player_file(stored, path)
+    return uid
 
 
 def _parse_agent(row: dict[str, Any]) -> HubAgent:

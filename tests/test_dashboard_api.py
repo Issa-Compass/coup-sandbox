@@ -176,6 +176,21 @@ def _get(base: str, path: str) -> tuple[int, dict]:
         return resp.status, json.loads(resp.read().decode())
 
 
+def test_player_uid_endpoint(dashboard, tmp_path, monkeypatch):
+    player_file = tmp_path / ".coup-player.json"
+    monkeypatch.setattr("coup.hub_client.PLAYER_FILE", player_file)
+    base, _ = dashboard
+    assert not player_file.is_file()
+    status, body = _get(base, "/api/player")
+    assert status == 200
+    uid = body["player_uid"]
+    assert uid.startswith("p_")
+    assert player_file.is_file()
+    status2, body2 = _get(base, "/api/player")
+    assert status2 == 200
+    assert body2["player_uid"] == uid
+
+
 def test_hub_status_unconfigured(dashboard):
     base, _ = dashboard
     status, body = _get(base, "/api/hub")

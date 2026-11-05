@@ -198,13 +198,26 @@ function writeStore(key, value) {
   }
 }
 
-/** Mint or reuse the browser player uid (p_ + 24 hex). */
-function ensurePlayerUid() {
+/** Mint or reuse the browser player uid (p_ + 24 hex).
+ *  Prefer localStorage; if missing, reuse `.coup-player.json` via /api/player.
+ */
+async function ensurePlayerUid() {
   const existing = String(state.submit.playerUid || readStore(PLAYER_STORE.uid) || "").trim();
   if (/^p_[0-9a-f]{16,32}$/.test(existing)) {
     state.submit.playerUid = existing;
     writeStore(PLAYER_STORE.uid, existing);
     return existing;
+  }
+  try {
+    const data = await fetchJson("/api/player");
+    const fromFile = String(data?.player_uid || "").trim();
+    if (/^p_[0-9a-f]{16,32}$/.test(fromFile)) {
+      state.submit.playerUid = fromFile;
+      writeStore(PLAYER_STORE.uid, fromFile);
+      return fromFile;
+    }
+  } catch {
+    /* offline / older server — fall through to a browser mint */
   }
   const bytes = new Uint8Array(12);
   crypto.getRandomValues(bytes);
@@ -327,7 +340,13 @@ async function init() {
   // Old runs still load into the Run menu in the background.
   if (!hasDeepLink) startNewTournament();
 
-  const boot = Promise.all([loadRuns(), loadAgents(), loadSession(), loadHub()]);
+  const boot = Promise.all([
+    loadRuns(),
+    loadAgents(),
+    loadSession(),
+    loadHub(),
+    ensurePlayerUid(),
+  ]);
   if (hasDeepLink) {
     await boot;
     syncLivePolling();
@@ -2595,7 +2614,7 @@ function bindMenuCloser() {
 async function openSubmitModal() {
   closeSetupMenu();
   state.submitOpen = true;
-  ensurePlayerUid();
+  await ensurePlayerUid();
   loadSavedSubmitIdentity();
   // Keep agent / name / last READY report across open/close.
   const local = localAgents();
@@ -2745,7 +2764,7 @@ async function runSubmitUpload() {
   const agent = state.submit.agent;
   const name = (state.submit.name || "").trim();
   const fullName = normalizeFullName(state.submit.fullName);
-  const playerUid = ensurePlayerUid();
+  const playerUid = await ensurePlayerUid();
   const wasUpdate = Boolean(state.submit.hasSubmitted);
   if (!agent || state.submit.busy) return;
   const nameIssue = coupAiNameError(name);

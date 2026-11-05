@@ -14,7 +14,6 @@ root, or export those variables. Upload needs the API key.
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from pathlib import Path
 
@@ -24,49 +23,28 @@ if str(ROOT) not in sys.path:
 
 from coup.hub_client import (  # noqa: E402
     HubError,
+    PLAYER_FILE,
     approve_agent,
     download_agent,
     download_queue_agent,
+    ensure_player_uid,
     list_queue,
     list_remote_agents,
+    load_player_file,
     load_repo_dotenv,
-    new_player_uid,
     reject_agent,
+    save_player_file,
     upload_agent,
-    validate_player_uid,
 )
 from coup.runner.catalog import LOCAL, resolve_agent  # noqa: E402
 
-PLAYER_FILE = ROOT / ".coup-player.json"
-
-
-def _load_player_file() -> dict:
-    if not PLAYER_FILE.is_file():
-        return {}
-    try:
-        raw = json.loads(PLAYER_FILE.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-    return raw if isinstance(raw, dict) else {}
-
-
-def _save_player_file(data: dict) -> None:
-    PLAYER_FILE.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-
 
 def _resolve_player_uid(explicit: str | None) -> str:
-    if explicit:
-        validate_player_uid(explicit)
-        return explicit.strip()
-    stored = _load_player_file()
-    existing = stored.get("player_uid")
-    if isinstance(existing, str) and existing.strip():
-        validate_player_uid(existing)
-        return existing.strip()
-    uid = new_player_uid()
-    stored["player_uid"] = uid
-    _save_player_file(stored)
-    print(f"minted player_uid={uid} (saved to {PLAYER_FILE.name})", file=sys.stderr)
+    before = load_player_file()
+    had = isinstance(before.get("player_uid"), str) and bool(str(before.get("player_uid")).strip())
+    uid = ensure_player_uid(explicit)
+    if not explicit and not had:
+        print(f"minted player_uid={uid} (saved to {PLAYER_FILE.name})", file=sys.stderr)
     return uid
 
 
@@ -137,11 +115,11 @@ def main() -> None:
                 full_name=args.full_name,
                 player_uid=uid,
             )
-            stored = _load_player_file()
+            stored = load_player_file()
             stored["player_uid"] = uid
             stored["name"] = meta.name
             stored["full_name"] = meta.full_name or args.full_name
-            _save_player_file(stored)
+            save_player_file(stored)
             who = f" by {meta.full_name}" if meta.full_name else ""
             print(
                 f"uploaded {meta.name}{who} player_uid={uid} status={meta.status} "
