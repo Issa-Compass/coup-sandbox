@@ -14,6 +14,7 @@ import subprocess
 import sys
 import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +31,7 @@ from coup.agent_api import (
     default_loss,
 )
 from coup.engine.rules import exchange_keep_is_legal, response_is_legal
+from coup.hub_client import HubError, close_session, session_act, start_session
 from coup.runner.load_agent import load_agent_class
 from coup.serialize import from_data, to_data
 
@@ -418,6 +420,129 @@ def _readline(proc: subprocess.Popen[str], timeout: float) -> str | None:
     return item
 
 
+@dataclass(frozen=True)
+class RemoteAgentRef:
+    """A hub agent played through a coup-master session. There is no local file."""
+
+    name: str
+    hub_base: str
+
+    @property
+    def stem(self) -> str:
+        return self.name
+
+
+class RemotePlayer(SandboxPlayer):
+    """Seat whose decisions come from a coup-master play session.
+
+    The hub runs the agent and enforces the clock. Only the decision crosses
+    the wire, so the agent file is never written here.
+    """
+
+    def __init__(self, ref: RemoteAgentRef, name: str, timeout: float):
+        super().__init__(Path(ref.name), name, timeout)
+        self.ref = ref
+        self.session_id: str | None = None
+        self.http_timeout = max(15.0, timeout + 10.0)
+
+    def on_game_start(self, view: PlayerView, seed: int) -> None:
+        self._start = (view, seed)
+        self._fallback = False
+        if not self._open():
+            return
+        status, _ = self._call("on_game_start", {"view": to_data(view), "seed": seed}, count=False)
+        if status != "ok":
+            self._fallback = True
+
+    def on_game_end(self, view: PlayerView, result: GameResult) -> None:
+        if self._fallback or self.session_id is None:
+            return
+        self._call("on_game_end", {"view": to_data(view), "result": to_data(result)}, count=False)
+
+    def close(self) -> None:
+        session_id, self.session_id = self.session_id, None
+        if session_id is None:
+            return
+        try:
+            close_session(session_id, base_url=self.ref.hub_base)
+        except HubError:
+            return
+
+    def _decision(self, method: str, payload: dict[str, Any]) -> tuple[str, object]:
+        if self._fallback or not self._open():
+            self.decisions += 1
+            self.errors += 1
+            return "error", None
+        return self._call(method, payload)
+
+    def _open(self) -> bool:
+        if self.session_id is not None:
+            return True
+        try:
+            self.session_id = start_session(
+                [self.ref.name], base_url=self.ref.hub_base, timeout=self.http_timeout
+            )
+        except HubError as exc:
+            self.load_error = str(exc)
+            self._fallback = True
+            return False
+        return True
+
+    def _call(
+        self, method: str, payload: dict[str, Any], *, count: bool = True
+    ) -> tuple[str, object]:
+        body = {**payload, **_standings_payload()}
+        started = time.perf_counter()
+        try:
+            reply = self._send(method, body)
+        except HubError as exc:
+            reply = {"ok": False, "status": "error", "error": str(exc)}
+        if count:
+            self.decision_time += time.perf_counter() - started
+            self.decisions += 1
+        if reply.get("ok"):
+            try:
+                return "ok", from_data(reply.get("result"))
+            except Exception as exc:
+                if count:
+                    self.errors += 1
+                return "error", str(exc)
+        status = "timeout" if reply.get("status") == "timeout" else "error"
+        if count:
+            if status == "timeout":
+                self.timeouts += 1
+            else:
+                self.errors += 1
+        self.load_error = str(reply.get("error") or "hub agent error")
+        return status, None
+
+    def _send(self, method: str, body: dict[str, Any]) -> dict[str, Any]:
+        assert self.session_id is not None
+        try:
+            return session_act(
+                self.session_id, method, body, base_url=self.ref.hub_base, timeout=self.http_timeout
+            )
+        except HubError as exc:
+            if exc.status != 404:
+                raise
+        # The hub reaped an idle session: open a new one and replay the game start.
+        self.session_id = None
+        if not self._open():
+            raise HubError(self.load_error or "hub session unavailable")
+        if self._start is not None and method != "on_game_start":
+            view, seed = self._start
+            session_act(
+                self.session_id,
+                "on_game_start",
+                {"view": to_data(view), "seed": seed, **_standings_payload()},
+                base_url=self.ref.hub_base,
+                timeout=self.http_timeout,
+            )
+        return session_act(
+            self.session_id, method, body, base_url=self.ref.hub_base, timeout=self.http_timeout
+        )
+
+
 def _standings_payload() -> dict[str, Any]:
     snapshot = current_standings()
     if snapshot is None:
@@ -425,7 +550,9 @@ def _standings_payload() -> dict[str, Any]:
     return {"standings": to_data(snapshot)}
 
 
-def open_player(path: Path, name: str, sandbox: bool, timeout: float) -> Player:
+def open_player(path: Path | RemoteAgentRef, name: str, sandbox: bool, timeout: float) -> Player:
+    if isinstance(path, RemoteAgentRef):
+        return RemotePlayer(path, name, timeout)
     if sandbox:
         return SandboxPlayer(path, name, timeout)
     try:

@@ -69,7 +69,7 @@ def load_repo_dotenv(path: Path | None = None) -> None:
 @dataclass(frozen=True)
 class HubAgent:
     name: str
-    sha256: str
+    sha256: str | None
     size_bytes: int
     uploaded_at: str
     uploader: str | None = None
@@ -97,10 +97,10 @@ def require_master_url() -> str:
     return url
 
 
-def _api_key(api_key: str | None = None) -> str:
-    key = api_key if api_key is not None else os.environ.get("COUP_MASTER_API_KEY", "").strip()
+def _admin_key(api_key: str | None = None) -> str:
+    key = api_key if api_key is not None else os.environ.get("COUP_MASTER_ADMIN_KEY", "").strip()
     if not key:
-        raise HubError("set COUP_MASTER_API_KEY for this hub command")
+        raise HubError("set COUP_MASTER_ADMIN_KEY (organizer key) for this hub command")
     return key
 
 
@@ -196,10 +196,11 @@ def _parse_agent(row: dict[str, Any]) -> HubAgent:
     person = row.get("full_name") or row.get("uploader")
     person_s = str(person) if person else None
     uid = row.get("player_uid")
+    sha = row.get("sha256")
     return HubAgent(
         name=str(row["name"]),
-        sha256=str(row["sha256"]),
-        size_bytes=int(row["size_bytes"]),
+        sha256=str(sha) if sha else None,
+        size_bytes=int(row.get("size_bytes") or 0),
         uploaded_at=str(row["uploaded_at"]),
         uploader=person_s,
         full_name=person_s,
@@ -245,7 +246,7 @@ def list_queue(
     timeout: float = DEFAULT_TIMEOUT,
 ) -> list[HubAgent]:
     base = (base_url or require_master_url()).rstrip("/")
-    headers = {"X-API-Key": _api_key(api_key)}
+    headers = {"X-API-Key": _admin_key(api_key)}
     payload = _request_json("GET", f"{base}/v1/admin/queue", headers=headers, timeout=timeout)
     agents = payload.get("agents")
     if not isinstance(agents, list):
@@ -258,27 +259,14 @@ def download_agent(
     dest: Path,
     *,
     base_url: str | None = None,
-    timeout: float = DEFAULT_TIMEOUT,
-) -> Path:
-    validate_local_name(name)
-    base = (base_url or require_master_url()).rstrip("/")
-    data = _request_bytes("GET", f"{base}/v1/agents/{urllib.parse.quote(name)}", timeout=timeout)
-    return _write_agent(dest, data)
-
-
-def download_queue_agent(
-    name: str,
-    dest: Path,
-    *,
-    base_url: str | None = None,
     api_key: str | None = None,
     timeout: float = DEFAULT_TIMEOUT,
 ) -> Path:
-    """Organizer download of quarantined (or any) agent via admin API."""
+    """Organizer download of any agent via the admin API (needs COUP_MASTER_ADMIN_KEY)."""
 
     validate_local_name(name)
     base = (base_url or require_master_url()).rstrip("/")
-    headers = {"X-API-Key": _api_key(api_key)}
+    headers = {"X-API-Key": _admin_key(api_key)}
     data = _request_bytes(
         "GET",
         f"{base}/v1/admin/agents/{urllib.parse.quote(name)}",
@@ -298,7 +286,7 @@ def approve_agent(
 ) -> HubAgent:
     validate_local_name(name)
     base = (base_url or require_master_url()).rstrip("/")
-    headers = {"X-API-Key": _api_key(api_key)}
+    headers = {"X-API-Key": _admin_key(api_key)}
     if actor:
         headers["X-Actor"] = actor[:128]
     payload = _request_json(
@@ -320,13 +308,73 @@ def reject_agent(
 ) -> None:
     validate_local_name(name)
     base = (base_url or require_master_url()).rstrip("/")
-    headers = {"X-API-Key": _api_key(api_key)}
+    headers = {"X-API-Key": _admin_key(api_key)}
     if actor:
         headers["X-Actor"] = actor[:128]
     _request_bytes(
         "POST",
         f"{base}/v1/admin/agents/{urllib.parse.quote(name)}/reject",
         headers=headers,
+        timeout=timeout,
+    )
+
+
+def start_session(
+    names: list[str],
+    *,
+    base_url: str | None = None,
+    timeout: float = DEFAULT_TIMEOUT,
+) -> str:
+    """Start a hub play session. The hub runs the agents; their source stays on the hub."""
+
+    for name in names:
+        validate_local_name(name)
+    base = (base_url or require_master_url()).rstrip("/")
+    payload = _request_json(
+        "POST",
+        f"{base}/v1/sessions",
+        data=json.dumps({"agents": list(names)}).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        timeout=timeout,
+    )
+    session_id = payload.get("session_id")
+    if not isinstance(session_id, str) or not session_id:
+        raise HubError("master returned no session_id")
+    return session_id
+
+
+def session_act(
+    session_id: str,
+    method: str,
+    payload: dict[str, Any],
+    *,
+    seat: int = 0,
+    base_url: str | None = None,
+    timeout: float = DEFAULT_TIMEOUT,
+) -> dict[str, Any]:
+    """One decision from a hub seat: ``{"ok": True, "result": …}`` or ``{"ok": False, "status", "error"}``."""
+
+    base = (base_url or require_master_url()).rstrip("/")
+    body = json.dumps({"method": method, "seat": seat, **payload}).encode("utf-8")
+    return _request_json(
+        "POST",
+        f"{base}/v1/sessions/{urllib.parse.quote(session_id)}/act",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        timeout=timeout,
+    )
+
+
+def close_session(
+    session_id: str,
+    *,
+    base_url: str | None = None,
+    timeout: float = 10.0,
+) -> None:
+    base = (base_url or require_master_url()).rstrip("/")
+    _request_bytes(
+        "DELETE",
+        f"{base}/v1/sessions/{urllib.parse.quote(session_id)}",
         timeout=timeout,
     )
 

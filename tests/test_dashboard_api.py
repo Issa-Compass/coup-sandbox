@@ -38,12 +38,57 @@ def dashboard(tmp_path: Path):
         server.server_close()
 
 
+HUB_AGENTS = {"hub_bot", "slow_bot"}
+
+
+def _fake_decision(agent: str, request: dict) -> dict:
+    """What the hub returns for one act: a decision, never the agent file."""
+
+    from coup.agent_api import Pass, default_action, default_exchange, default_loss
+    from coup.serialize import from_data, to_data
+
+    if agent == "slow_bot" and request["method"] not in ("on_game_start", "on_game_end"):
+        return {"ok": False, "status": "timeout", "error": "timeout"}
+    method = request["method"]
+    if method in ("on_game_start", "on_game_end"):
+        return {"ok": True, "result": None}
+    view = from_data(request["view"])
+    if method == "choose_action":
+        result = default_action(view)
+    elif method in ("respond_to_action", "respond_to_block"):
+        result = Pass()
+    elif method == "choose_card_to_lose":
+        result = default_loss(view)
+    elif method == "choose_exchange":
+        result = default_exchange(view)
+    else:
+        return {"ok": False, "status": "error", "error": "unknown method"}
+    return {"ok": True, "result": to_data(result)}
+
+
 @pytest.fixture()
 def dashboard_with_hub(tmp_path: Path):
     uploads: list[dict] = []
+    requests: list[str] = []
+    sessions: dict[str, list[str]] = {}
 
     class Master(BaseHTTPRequestHandler):
+        def _send_json(self, status: int, payload: object) -> None:
+            body = json.dumps(payload).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_DELETE(self):  # noqa: N802
+            requests.append(f"DELETE {self.path}")
+            sessions.pop(self.path.rsplit("/", 1)[-1], None)
+            self.send_response(204)
+            self.end_headers()
+
         def do_GET(self):  # noqa: N802
+            requests.append(f"GET {self.path}")
             if self.path == "/health":
                 body = json.dumps({"status": "ok", "version": "test"}).encode()
                 self.send_response(200)
@@ -58,7 +103,6 @@ def dashboard_with_hub(tmp_path: Path):
                         "agents": [
                             {
                                 "name": "hub_bot",
-                                "sha256": "b" * 64,
                                 "size_bytes": 10,
                                 "uploaded_at": "2026-01-01T00:00:00+00:00",
                                 "uploader": "Ada Lovelace",
@@ -67,7 +111,6 @@ def dashboard_with_hub(tmp_path: Path):
                             },
                             {
                                 "name": "no_owner_bot",
-                                "sha256": "c" * 64,
                                 "size_bytes": 10,
                                 "uploaded_at": "2026-01-01T00:00:00+00:00",
                                 "uploader": None,
@@ -84,21 +127,44 @@ def dashboard_with_hub(tmp_path: Path):
                 self.wfile.write(body)
                 return
             if self.path == "/v1/agents/hub_bot":
-                data = GOOD.encode()
-                self.send_response(200)
-                self.send_header("Content-Type", "text/x-python")
-                self.send_header("Content-Length", str(len(data)))
-                self.end_headers()
-                self.wfile.write(data)
+                self._send_json(
+                    200,
+                    {
+                        "name": "hub_bot",
+                        "size_bytes": 10,
+                        "uploaded_at": "2026-01-01T00:00:00+00:00",
+                        "full_name": "Ada Lovelace",
+                        "status": "approved",
+                    },
+                )
                 return
             self.send_error(404)
 
         def do_POST(self):  # noqa: N802
+            requests.append(f"POST {self.path}")
+            length = int(self.headers.get("Content-Length", "0"))
+            raw = self.rfile.read(length)
+            if self.path == "/v1/sessions":
+                names = json.loads(raw)["agents"]
+                if any(name not in HUB_AGENTS for name in names):
+                    self._send_json(404, {"detail": {"error": "agent not found"}})
+                    return
+                session_id = f"s{len(sessions) + 1}"
+                sessions[session_id] = names
+                self._send_json(201, {"session_id": session_id, "agents": names})
+                return
+            if self.path.startswith("/v1/sessions/") and self.path.endswith("/act"):
+                session_id = self.path.split("/")[3]
+                if session_id not in sessions:
+                    self._send_json(404, {"detail": {"error": "play session not found"}})
+                    return
+                request = json.loads(raw)
+                agent = sessions[session_id][request.get("seat", 0)]
+                self._send_json(200, _fake_decision(agent, request))
+                return
             if self.path != "/v1/agents":
                 self.send_error(404)
                 return
-            length = int(self.headers.get("Content-Length", "0"))
-            raw = self.rfile.read(length)
             text = raw.decode("utf-8", errors="replace")
 
             def _form_field(field: str) -> str | None:
@@ -143,7 +209,7 @@ def dashboard_with_hub(tmp_path: Path):
     thread.start()
     base = f"http://127.0.0.1:{server.server_address[1]}"
     try:
-        yield base, uploads, master_url
+        yield base, uploads, master_url, requests
     finally:
         server.shutdown()
         server.server_close()
@@ -208,7 +274,7 @@ def test_hub_ping_unconfigured(dashboard):
 
 
 def test_hub_ping_ready(dashboard_with_hub):
-    base, _uploads, _master_url = dashboard_with_hub
+    base, _uploads, _master_url, _requests = dashboard_with_hub
     status, body = _get(base, "/api/hub/ping")
     assert status == 200
     assert body["configured"] is True
@@ -218,7 +284,7 @@ def test_hub_ping_ready(dashboard_with_hub):
 
 
 def test_agents_include_hub_submissions(dashboard_with_hub):
-    base, _uploads, _master_url = dashboard_with_hub
+    base, _uploads, _master_url, _requests = dashboard_with_hub
     status, body = _get(base, "/api/agents")
     assert status == 200
     by_id = {row["id"]: row for row in body["agents"]}
@@ -244,7 +310,7 @@ def test_hub_and_local_same_name_coexist(dashboard_with_hub, tmp_path, monkeypat
     monkeypatch.setattr(catalog, "LOCAL", local_root)
     monkeypatch.setattr(catalog, "SUBMISSIONS", tmp_path / "submissions")
 
-    base, _uploads, _master_url = dashboard_with_hub
+    base, _uploads, _master_url, _requests = dashboard_with_hub
     status, body = _get(base, "/api/agents")
     assert status == 200
     by_id = {row["id"]: row for row in body["agents"]}
@@ -338,7 +404,7 @@ def test_upload_requires_hub(dashboard):
 
 
 def test_upload_rejects_not_ready(dashboard_with_hub, tmp_path: Path):
-    base, uploads, _ = dashboard_with_hub
+    base, uploads, _, _requests = dashboard_with_hub
     path = ROOT / "tests" / "_unsafe_upload_agent.py"
     path.write_text(UNSAFE, encoding="utf-8")
     try:
@@ -362,7 +428,7 @@ def test_upload_rejects_not_ready(dashboard_with_hub, tmp_path: Path):
 
 def test_upload_cannot_skip_ready_check(dashboard_with_hub, tmp_path: Path):
     """require_ready=false must not bypass safety + readiness."""
-    base, uploads, _ = dashboard_with_hub
+    base, uploads, _, _requests = dashboard_with_hub
     path = ROOT / "tests" / "_unsafe_skip_ready_agent.py"
     path.write_text(UNSAFE, encoding="utf-8")
     try:
@@ -385,7 +451,7 @@ def test_upload_cannot_skip_ready_check(dashboard_with_hub, tmp_path: Path):
 
 
 def test_upload_after_ready(dashboard_with_hub):
-    base, uploads, master_url = dashboard_with_hub
+    base, uploads, master_url, _requests = dashboard_with_hub
     status, hub = _get(base, "/api/hub")
     assert status == 200
     assert hub["configured"] is True
@@ -415,7 +481,7 @@ def test_upload_after_ready(dashboard_with_hub):
 
 
 def test_upload_requires_full_name(dashboard_with_hub):
-    base, uploads, _ = dashboard_with_hub
+    base, uploads, _, _requests = dashboard_with_hub
     status, body = _post(
         base,
         "/api/hub/upload",
@@ -434,7 +500,7 @@ def test_upload_requires_full_name(dashboard_with_hub):
 
 
 def test_upload_requires_player_uid(dashboard_with_hub):
-    base, uploads, _ = dashboard_with_hub
+    base, uploads, _, _requests = dashboard_with_hub
     status, body = _post(
         base,
         "/api/hub/upload",
@@ -583,54 +649,37 @@ def test_read_roster_empty_without_file(tmp_path: Path):
     assert dash._read_roster(empty) == []
 
 
-def test_ensure_agent_reuses_hub_cache(dashboard_with_hub, tmp_path, monkeypatch):
-    """Arena downloads hit the hub once; later resolves use the on-disk cache."""
-    _base, _uploads, master_url = dashboard_with_hub
+def _no_agent_files(root: Path) -> list[Path]:
+    return sorted(root.rglob("agent.py")) if root.exists() else []
+
+
+def _assert_no_source_fetch(requests: list[str]) -> None:
+    for line in requests:
+        assert not line.startswith("GET /v1/agents/"), line
+        assert "/v1/admin/" not in line, line
+
+
+def test_ensure_agent_plays_arena_remotely(dashboard_with_hub, tmp_path, monkeypatch):
+    """Arena tokens become a hub seat; nothing is downloaded or cached."""
+    _base, _uploads, master_url, requests = dashboard_with_hub
+    import coup.runner.catalog as catalog
+    from coup.runner.players import RemoteAgentRef
+
+    monkeypatch.setattr(catalog, "LOCAL", tmp_path / "local")
+    monkeypatch.setattr(catalog, "SUBMISSIONS", tmp_path / "submissions")
+
+    ref = dash._ensure_agent("arena:hub_bot", hub_base=master_url)
+    assert ref == RemoteAgentRef(name="hub_bot", hub_base=master_url)
+    assert _no_agent_files(tmp_path) == []
+    assert requests == []
+
+
+def test_session_with_arena_agent_writes_no_file(dashboard_with_hub, tmp_path, monkeypatch):
+    base, _uploads, _master_url, requests = dashboard_with_hub
     import coup.runner.catalog as catalog
 
-    submissions = tmp_path / "submissions"
-    monkeypatch.setattr(catalog, "SUBMISSIONS", submissions)
-    monkeypatch.setattr(dash, "SUBMISSIONS", submissions)
-
-    calls: list[str] = []
-    real_download = dash.download_agent
-
-    def counting_download(name, dest, **kwargs):
-        calls.append(name)
-        return real_download(name, dest, **kwargs)
-
-    monkeypatch.setattr(dash, "download_agent", counting_download)
-
-    path1 = dash._ensure_agent("arena:hub_bot", hub_base=master_url)
-    path2 = dash._ensure_agent("arena:hub_bot", hub_base=master_url)
-    path3 = dash._ensure_agent("arena:hub_bot", hub_base=master_url, refresh=True)
-
-    assert path1 == path2 == path3
-    assert path1.is_file()
-    assert calls == ["hub_bot", "hub_bot"]  # cold + refresh; middle call cached
-
-
-def test_session_start_uses_cached_paths_not_redownload(dashboard_with_hub, tmp_path, monkeypatch):
-    """Session start resolves agents once; the worker must not download again."""
-    base, _uploads, master_url = dashboard_with_hub
-    import coup.runner.catalog as catalog
-
-    submissions = tmp_path / "submissions"
-    monkeypatch.setattr(catalog, "SUBMISSIONS", submissions)
-    monkeypatch.setattr(dash, "SUBMISSIONS", submissions)
-
-    # Seed cache so start does not need the hub for hub_bot.
-    cached = submissions / "hub_bot" / "agent.py"
-    cached.parent.mkdir(parents=True)
-    cached.write_text(GOOD, encoding="utf-8")
-
-    calls: list[str] = []
-
-    def counting_download(name, dest, **kwargs):
-        calls.append(name)
-        raise AssertionError("download_agent should not run when cache exists")
-
-    monkeypatch.setattr(dash, "download_agent", counting_download)
+    monkeypatch.setattr(catalog, "LOCAL", tmp_path / "local")
+    monkeypatch.setattr(catalog, "SUBMISSIONS", tmp_path / "submissions")
 
     status, body = _post(
         base,
@@ -643,11 +692,11 @@ def test_session_start_uses_cached_paths_not_redownload(dashboard_with_hub, tmp_
             "table_size": 2,
             "sandbox": False,
             "force": True,
-            "run_id": "cache-session-test",
+            "run_id": "remote-session-test",
         },
     )
     assert status == 200, body
-    for _ in range(100):
+    for _ in range(200):
         _st, snap = _get(base, "/api/session")
         if snap["status"] != "running":
             break
@@ -655,7 +704,99 @@ def test_session_start_uses_cached_paths_not_redownload(dashboard_with_hub, tmp_
 
         time.sleep(0.05)
     assert snap["status"] == "done", snap
-    assert calls == []
+    assert _no_agent_files(tmp_path / "local") == []
+    assert _no_agent_files(tmp_path / "submissions") == []
+    assert "POST /v1/sessions" in requests
+    assert any(line.endswith("/act") for line in requests)
+    assert any(line.startswith("DELETE /v1/sessions/") for line in requests)
+    _assert_no_source_fetch(requests)
+
+    summary = json.loads(
+        (tmp_path / "results" / "remote-session-test" / "round_1" / "summary.json").read_text()
+    )
+    hub_row = next(row for row in summary["agents"] if row["name"] == "hub_bot")
+    assert hub_row["errors"] == 0
+    assert hub_row["timeouts"] == 0
+    assert hub_row["decisions"] > 0
+
+
+def test_remote_player_counts_hub_timeouts(dashboard_with_hub):
+    _base, _uploads, master_url, requests = dashboard_with_hub
+    from coup.runner.match import play_game
+    from coup.runner.players import RemoteAgentRef, open_player
+
+    remote = open_player(
+        RemoteAgentRef(name="slow_bot", hub_base=master_url), "slow_bot", sandbox=False, timeout=1.0
+    )
+    local = open_player(ROOT / "agents" / "examples" / "random_bot.py", "random", False, 1.0)
+    try:
+        played = play_game([remote, local], seed=4)
+    finally:
+        remote.close()
+        local.close()
+    assert played.result.winner in (0, 1)
+    assert played.penalties["slow_bot"]["timeouts"] > 0
+    assert played.penalties["slow_bot"]["errors"] == 0
+    _assert_no_source_fetch(requests)
+
+
+def test_remote_player_unknown_agent_falls_back(dashboard_with_hub):
+    _base, _uploads, master_url, _requests = dashboard_with_hub
+    from coup.runner.match import play_game
+    from coup.runner.players import RemoteAgentRef, open_player
+
+    remote = open_player(
+        RemoteAgentRef(name="missing_bot", hub_base=master_url), "missing_bot", False, 1.0
+    )
+    local = open_player(ROOT / "agents" / "examples" / "random_bot.py", "random", False, 1.0)
+    try:
+        played = play_game([remote, local], seed=5)
+    finally:
+        local.close()
+    assert played.penalties["missing_bot"]["errors"] > 0
+    assert "not found" in (remote.load_error or "")
+
+
+def test_hub_download_routes_removed(dashboard_with_hub):
+    base, _uploads, _master_url, requests = dashboard_with_hub
+    import urllib.error
+    import urllib.request
+
+    with pytest.raises(urllib.error.HTTPError) as got:
+        urllib.request.urlopen(f"{base}/api/hub/agents/hub_bot", timeout=10)
+    assert got.value.code == 404
+    status, _body = _post(base, "/api/hub/download", {"name": "hub_bot"})
+    assert status == 404
+    _assert_no_source_fetch(requests)
+
+
+def test_game_route_never_serves_hands(dashboard):
+    base, results = dashboard
+    games = results / "hands-run" / "round_1" / "games"
+    games.mkdir(parents=True)
+    header = {"type": "game", "id": "g0001", "seed": 1, "players": ["a", "b"], "max_turns": 200}
+    event = {
+        "type": "event",
+        "message": "start",
+        "turn": 0,
+        "state": {"players": [{"name": "a", "coins": 2, "influence": 2, "revealed": [], "hand": ["duke", "captain"]}]},
+    }
+    # An older log that still stores hands inline, plus the organizer sibling.
+    for name in ("g0001.jsonl", "g0001.hands.jsonl"):
+        (games / name).write_text(
+            json.dumps(header) + "\n" + json.dumps(event) + "\n", encoding="utf-8"
+        )
+
+    status, listing = _get(base, "/api/runs/hands-run/rounds/1/games")
+    assert status == 200
+    assert [game["id"] for game in listing["games"]] == ["g0001"]
+
+    status, body = _get(base, "/api/runs/hands-run/rounds/1/games/g0001")
+    assert status == 200
+    for line in body["lines"]:
+        for player in (line.get("state") or {}).get("players", []):
+            assert "hand" not in player
+    assert "duke" not in json.dumps(body)
 
 
 def test_manual_play_human_vs_agents(dashboard):

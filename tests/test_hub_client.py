@@ -8,6 +8,8 @@ import pytest
 
 from coup.hub_client import (
     HubError,
+    _parse_agent,
+    download_agent,
     ensure_player_uid,
     load_player_file,
     load_repo_dotenv,
@@ -30,6 +32,30 @@ def test_load_repo_dotenv_does_not_override(tmp_path, monkeypatch):
     load_repo_dotenv(env_file)
     assert os.environ["COUP_MASTER_URL"] == "https://example.test"
     assert os.environ["COUP_MASTER_API_KEY"] == "already-set"
+
+
+def test_parse_public_agent_row_without_hash_or_uid():
+    agent = _parse_agent(
+        {
+            "name": "hub_bot",
+            "size_bytes": 10,
+            "uploaded_at": "2026-01-01T00:00:00+00:00",
+            "full_name": "Ada Lovelace",
+            "status": "approved",
+        }
+    )
+    assert agent.name == "hub_bot"
+    assert agent.sha256 is None
+    assert agent.player_uid is None
+    assert agent.full_name == "Ada Lovelace"
+
+
+def test_download_agent_needs_admin_key(tmp_path, monkeypatch):
+    monkeypatch.delenv("COUP_MASTER_ADMIN_KEY", raising=False)
+    monkeypatch.setenv("COUP_MASTER_API_KEY", "player-upload-key")
+    with pytest.raises(HubError, match="COUP_MASTER_ADMIN_KEY"):
+        download_agent("hub_bot", tmp_path / "agent.py", base_url="http://127.0.0.1:9")
+    assert not (tmp_path / "agent.py").exists()
 
 
 def test_name_charset():

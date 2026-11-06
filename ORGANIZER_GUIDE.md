@@ -2,7 +2,7 @@
 
 For people running a Coup agent tournament with this sandbox. Players should not need this.
 
-This repo is the shared sandbox. Player bots stay gitignored on their machines and are submitted through **coup-master** using a `.env` you distribute (URL + API key).
+This repo is the shared sandbox. Player bots stay gitignored on their machines and are submitted through **coup-master** using a `.env` you distribute (URL + player upload key).
 
 ## Before players start
 
@@ -26,6 +26,10 @@ COUP_MASTER_API_KEY=…
 ```
 
 Keep the API key out of the public repo, chat logs, and screenshots. Ship placeholders only in `.env.example`.
+
+`COUP_MASTER_API_KEY` is the player upload key. It cannot download, approve, or reject agents. Organizer commands (`collect_submissions.py`, `hub.py queue|pull-queue|approve|reject`) need a separate `COUP_MASTER_ADMIN_KEY`. Put that one only in your own `.env` or shell, never in the file you hand to players.
+
+Players see other submissions in the dashboard’s **The Arena** and can play them. The hub runs those bots and returns moves only; agent files never reach player machines.
 
 Then run a staff dry run:
 
@@ -59,7 +63,7 @@ python scripts/collect_submissions.py --force
 python scripts/tournament.py --round 1 --submissions --games-per-agent 20 --run-id tournament --seed 1
 ```
 
-`collect_submissions.py` downloads approved hub agents into `agents/submissions/` (also gitignored on the organizer machine). Use `--force` to refresh from the hub before a scored round.
+`collect_submissions.py` downloads approved hub agents into `agents/submissions/` (also gitignored on the organizer machine) using `COUP_MASTER_ADMIN_KEY`. Use `--force` to refresh from the hub before a scored round.
 
 Use `--round 2`, `--round 3`, and so on for later checkpoints. Do not reuse a round number unless you pass `--force`, which deletes that round's files. Cumulative standings are written to `results/tournament/standings.html` from every `round_*` folder under that run id.
 
@@ -73,7 +77,7 @@ Each tournament run mints opaque public UIDs (`results/<run-id>/player_uids.json
 
 - `results/<run-id>/round_N/leaderboard.html` is the page to put on a screen.
 - `results/<run-id>/standings.html` adds every round in that run.
-- `results/<run-id>/round_N/games/g0001.jsonl` is one game. `python scripts/replay.py <that file>` prints it.
+- `results/<run-id>/round_N/games/g0001.jsonl` is one game. `python scripts/replay.py <that file>` prints it. Add `--reveal` to print face-down hands from `g0001.hands.jsonl` next to it.
 - Illegal moves, errors, and timeouts are columns. A strong win rate with a large error count is a broken agent that got lucky defaults, not a finished one.
 
 For the live projector dashboard (scoreboard + game playback with speed and reveal):
@@ -82,16 +86,17 @@ For the live projector dashboard (scoreboard + game playback with speed and reve
 python scripts/serve_dashboard.py --results results --port 8765
 ```
 
-Open `http://127.0.0.1:8765`. **New session** lets you pick agents, add multiple rounds, and play them in the background. Finished games appear under Games while the session is still running — Watch any completed table without waiting for the round to finish. Or pick an existing run, switch Standings / Round tabs, open Games, then Watch. Playback supports 2s / 1s / 0.5s / 0.25s per event. **Reveal cards** shows face-down hands from the log.
+Open `http://127.0.0.1:8765`. **New session** lets you pick agents, add multiple rounds, and play them in the background. Finished games appear under Games while the session is still running — Watch any completed table without waiting for the round to finish. Or pick an existing run, switch Standings / Round tabs, open Games, then Watch. Playback supports 2s / 1s / 0.5s / 0.25s per event.
 
-Each event line in a new game log includes a `state` object: public coins / influence / revealed cards, plus `hand` (face-down cards) for the reveal toggle. Older logs without `state` still open; reveal stays disabled.
+Each event line in a game log includes a `state` object: public coins / influence / revealed cards. Face-down hands are written only to the `gNNNN.hands.jsonl` sibling. The dashboard never serves that file (and strips `hand` from older logs), so **Reveal** stays disabled in the browser. Use `replay.py --reveal` on the organizer machine when you need the hidden cards.
 
 Archive the `results/<run-id>` folder when you are done. It is gitignored on purpose.
 
 ## If something breaks
 
 - Hub upload fails static check or `NOT READY`: the player fixes locally and re-uploads. You can still collect whatever is already on the hub; the tournament will play defaults for bad decisions and count them. Drop them only if the file does not import at all.
-- `collect_submissions.py` needs `COUP_MASTER_URL` (from `.env`). It does not need the API key to download approved agents. Reject a bad name with `python scripts/hub.py reject <name>`.
+- `collect_submissions.py` needs `COUP_MASTER_URL` and `COUP_MASTER_ADMIN_KEY`. The player upload key gets 401 on every admin route. Reject a bad name with `python scripts/hub.py reject <name>` (also admin key).
+- An Arena seat that shows errors on every decision usually means the hub could not start that bot (missing, or it fails to load). The game still finishes on defaults.
 - The sandbox is one process per agent for the whole round. A timeout kills that process and starts it again on the next decision. One bad agent cannot hang the table.
 - Staff rehearsal uses `--no-sandbox`. The scored command does not. An agent that cheats by reading engine memory will pass a local `--no-sandbox` game and fail, or play randomly, in the real round.
 

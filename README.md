@@ -22,7 +22,7 @@ Windows (PowerShell):
 
 Open [http://127.0.0.1:8765](http://127.0.0.1:8765). Leave this running in a terminal. After you add or rename an agent folder, restart the server so **Local** refreshes. Optional: `PORT=9000 ./start.sh`.
 
-No `.env` needed for local play, tournaments, or watch. Submit stays disabled until you have a coup-master `.env` (URL + API key) from whoever runs the hub.
+No `.env` needed for local play, tournaments, or watch. Submit and The Arena stay disabled until you have a coup-master `.env` (URL + API key) from whoever runs the hub.
 
 ## 2. Setup (manual / CLI)
 
@@ -58,7 +58,7 @@ Smoke-test the shipped ladder (`random`, `honest`, `guard`, `turtle`, `greedy`) 
 python scripts/tournament.py --round 1 --games-per-agent 4 --no-sandbox --run-id examples-demo --force
 ```
 
-In the dashboard: open run `examples-demo` → **Standings** / **Games** → **Watch**. Playback speed and **Reveal cards** are on the watch view.
+In the dashboard: open run `examples-demo` → **Standings** / **Games** → **Watch**. Playback speed is on the watch view. Face-down cards are not shown there; `python scripts/replay.py <game log> --reveal` prints them from the local `.hands.jsonl` file.
 
 ## 4. Play a manual game
 
@@ -116,7 +116,11 @@ Scored hand-in is **hub upload** from the dashboard, not a GitHub PR. Keep itera
 
 7. Click **Submit to hub**. From the same browser later, use **Update on hub** to replace your entry.
 
-This browser keeps a stable player uid (and remembers your names in localStorage); re-submit with the same uid **replaces** your one hub entry. Clear site data for a new uid. CLI alternative: `python scripts/hub.py upload your-name --full-name "Ada Lovelace"` (from `agents/submissions/`). Pull someone else’s bot with `python scripts/hub.py download other-bot`.
+This browser keeps a stable player uid (and remembers your names in localStorage); re-submit with the same uid **replaces** your one hub entry. Clear site data for a new uid. CLI alternative: `python scripts/hub.py upload your-name --full-name "Ada Lovelace"` (from `agents/submissions/`). `python scripts/hub.py list` shows who else has submitted.
+
+## Play against other people’s bots
+
+With a coup-master `.env`, **The Arena** in **Play Games** lists every submitted bot by name. Add them to a manual game or a session like any other agent. The hub runs those bots and sends back only their moves: you see the public table (coins, influence, revealed cards, the action log), not their source or their face-down cards. Nothing is saved under `agents/`.
 
 ## Data your agent can analyze
 
@@ -156,7 +160,7 @@ You are never told who is who by submission name in a scored run. Infer strategi
 | `agents/submissions/` | Scored agent on disk (gitignored). Prefer dashboard **Submit agent** |
 | `.env.example` | Template for the coup-master `.env` |
 | `scripts/test_agent.py` | Ready check before you submit |
-| `scripts/hub.py` | Upload / list / download via coup-master |
+| `scripts/hub.py` | Upload / list via coup-master |
 | `start.sh` / `start.ps1` | Create venv, install deps, run dashboard |
 | `scripts/serve_dashboard.py` | Local dashboard |
 | `scripts/tournament.py` | A round and a leaderboard |

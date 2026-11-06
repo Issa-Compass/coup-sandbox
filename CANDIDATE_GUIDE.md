@@ -27,6 +27,7 @@ Do not edit the engine, the examples, or someone else's folder. Do not add depen
 3. Read `RULES.md` once. Then keep `API.md` open.
 4. Run `python scripts/test_agent.py agents/submissions/<your-name>/agent.py` after each change. Stop when it says `READY`.
 5. Watch a game: `python scripts/play.py --agents your-name,honest,guard,turtle,greedy --seed 1`.
+   With a coup-master `.env`, the dashboard’s **The Arena** lets you play against other submitted bots. The hub runs them and sends back moves only.
 6. When you have a coup-master `.env`, upload with `scripts/hub.py` (see above) or the dashboard Submit modal. Re-upload with the same browser/`player_uid` replaces your one hub entry.
 
 If you want Cursor or Claude to write the first version, paste `AI_PROMPT.md` and put your folder name in the blank.
