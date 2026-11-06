@@ -5,9 +5,9 @@ root, or export those variables. Upload needs the API key.
 
   python scripts/hub.py list
   python scripts/hub.py upload milo --full-name "Ada Lovelace"
-  python scripts/hub.py download other-bot
 
-  # Organizer:
+  # Organizer (COUP_MASTER_ADMIN_KEY):
+  python scripts/hub.py pull-queue some-bot
   python scripts/hub.py reject bad-bot
 """
 
@@ -26,7 +26,6 @@ from coup.hub_client import (  # noqa: E402
     PLAYER_FILE,
     approve_agent,
     download_agent,
-    download_queue_agent,
     ensure_player_uid,
     list_queue,
     list_remote_agents,
@@ -36,7 +35,7 @@ from coup.hub_client import (  # noqa: E402
     save_player_file,
     upload_agent,
 )
-from coup.runner.catalog import LOCAL, resolve_agent  # noqa: E402
+from coup.runner.catalog import resolve_agent  # noqa: E402
 
 
 def _resolve_player_uid(explicit: str | None) -> str:
@@ -70,18 +69,9 @@ def main() -> None:
         help="Stable player id (p_ + hex). Default: reuse or mint .coup-player.json",
     )
 
-    down = sub.add_parser("download", help="Download an approved remote agent into agents/local/")
-    down.add_argument("name", help="Remote agent name")
-    down.add_argument(
-        "--dest",
-        type=Path,
-        default=None,
-        help="Destination file or folder (default: agents/local/<name>/agent.py)",
-    )
-
     sub.add_parser("queue", help="Organizer: list any leftover quarantined uploads")
 
-    pull = sub.add_parser("pull-queue", help="Organizer: download a quarantined agent")
+    pull = sub.add_parser("pull-queue", help="Organizer: download any hub agent (admin key)")
     pull.add_argument("name")
     pull.add_argument("--dest", type=Path, default=None)
 
@@ -127,12 +117,6 @@ def main() -> None:
             )
             return
 
-        if args.cmd == "download":
-            dest = args.dest or (LOCAL / args.name / "agent.py")
-            written = download_agent(args.name, dest, base_url=args.url)
-            print(f"wrote {written}")
-            return
-
         if args.cmd == "queue":
             agents = list_queue(base_url=args.url)
             if not agents:
@@ -145,7 +129,7 @@ def main() -> None:
 
         if args.cmd == "pull-queue":
             dest = args.dest or (Path("/tmp") / f"coup-queue-{args.name}" / "agent.py")
-            written = download_queue_agent(args.name, dest, base_url=args.url)
+            written = download_agent(args.name, dest, base_url=args.url)
             print(f"wrote {written}")
             return
 

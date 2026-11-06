@@ -93,7 +93,43 @@ def test_example_bots_finish_and_replay():
     assert run(7) != run(8)
 
 
-def test_game_log_includes_board_state_and_hands(tmp_path: Path):
+def test_game_log_splits_public_state_from_hands(tmp_path: Path):
+    from coup.runner.reporting import hands_path, write_game_log
+
+    players = [
+        open_player(EXAMPLES[alias], alias, sandbox=False, timeout=1)
+        for alias in ("random", "honest")
+    ]
+    played = play_game(players, seed=3, max_turns=20)
+    path = tmp_path / "g0001.jsonl"
+    write_game_log(path, played, seed=3, game_id="g0001")
+    assert hands_path(path) == tmp_path / "g0001.hands.jsonl"
+
+    def read(target: Path) -> list[dict]:
+        return [json.loads(line) for line in target.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+    public = read(path)
+    full = read(hands_path(path))
+    assert len(public) == len(full)
+    events = [row for row in public if row["type"] == "event"]
+    full_events = [row for row in full if row["type"] == "event"]
+    assert events
+    assert len(played.game.board_snapshots) == len(played.game.history) == len(events)
+    for row, full_row in zip(events, full_events):
+        state = row["state"]
+        assert "phase" in state
+        assert row["message"] == full_row["message"]
+        for player, full_player in zip(state["players"], full_row["state"]["players"]):
+            assert "coins" in player
+            assert "hand" not in player
+            assert len(full_player["hand"]) == full_player["influence"]
+            assert len(player["revealed"]) + player["influence"] <= 2
+
+
+def test_replay_reveal_reads_hands_file(tmp_path: Path):
+    import subprocess
+    import sys
+
     from coup.runner.reporting import write_game_log
 
     players = [
@@ -103,18 +139,14 @@ def test_game_log_includes_board_state_and_hands(tmp_path: Path):
     played = play_game(players, seed=3, max_turns=20)
     path = tmp_path / "g0001.jsonl"
     write_game_log(path, played, seed=3, game_id="g0001")
-    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
-    events = [row for row in rows if row["type"] == "event"]
-    assert events
-    assert len(played.game.board_snapshots) == len(played.game.history)
-    for row in events:
-        state = row["state"]
-        assert "phase" in state
-        for player in state["players"]:
-            assert "coins" in player
-            assert "hand" in player
-            assert len(player["hand"]) == player["influence"]
-            assert len(player["revealed"]) + player["influence"] <= 2
+    script = Path(__file__).resolve().parents[1] / "scripts" / "replay.py"
+    plain = subprocess.run([sys.executable, str(script), str(path)], capture_output=True, text=True)
+    revealed = subprocess.run(
+        [sys.executable, str(script), str(path), "--reveal"], capture_output=True, text=True
+    )
+    assert plain.returncode == 0 and revealed.returncode == 0, revealed.stderr
+    assert "hands:" not in plain.stdout
+    assert "hands:" in revealed.stdout
 
 
 def test_illegal_action_and_exception_do_not_stop_the_game():

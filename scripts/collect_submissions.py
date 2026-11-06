@@ -1,7 +1,7 @@
 """Download approved hub agents into agents/submissions/ for a tournament round.
 
-Requires a coup-master `.env` (COUP_MASTER_URL). API key is not required to list
-or download approved agents.
+Organizer only. Needs COUP_MASTER_URL and COUP_MASTER_ADMIN_KEY. The player
+upload key cannot download agent files.
 
   python scripts/collect_submissions.py
   python scripts/collect_submissions.py --force
@@ -10,6 +10,7 @@ or download approved agents.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -33,6 +34,12 @@ def main() -> None:
     parser.add_argument("--url", default=None, help="Override COUP_MASTER_URL")
     args = parser.parse_args()
     load_repo_dotenv()
+    if not os.environ.get("COUP_MASTER_ADMIN_KEY", "").strip():
+        print(
+            "error: set COUP_MASTER_ADMIN_KEY (organizer key) to collect agent files",
+            file=sys.stderr,
+        )
+        sys.exit(1)
     try:
         agents = list_remote_agents(base_url=args.url)
     except HubError as exc:

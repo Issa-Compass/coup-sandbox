@@ -29,7 +29,6 @@ if str(ROOT) not in sys.path:
 
 from coup.hub_client import (  # noqa: E402
     HubError,
-    download_agent,
     ensure_player_uid,
     list_remote_agents,
     load_repo_dotenv,
@@ -41,8 +40,6 @@ from coup.hub_client import (  # noqa: E402
     validate_local_name,
 )
 from coup.runner.catalog import (  # noqa: E402
-    LOCAL,
-    SUBMISSIONS,
     arena_agent_id,
     arena_name,
     display_name_for_token,
@@ -51,7 +48,8 @@ from coup.runner.catalog import (  # noqa: E402
 )
 from coup.runner.load_agent import unique_instance_names  # noqa: E402
 from coup.runner.manual import ManualGame, snapshot_dict  # noqa: E402
-from coup.runner.players import open_player  # noqa: E402
+from coup.runner.players import RemoteAgentRef, open_player  # noqa: E402
+from coup.runner.reporting import is_hands_log, strip_hands  # noqa: E402
 from coup.runner.testing import evaluate  # noqa: E402
 from coup.runner.tournament import run_round  # noqa: E402
 
@@ -341,14 +339,6 @@ def make_handler(
                 if parts == ["api", "hub", "agents"]:
                     self._hub_list()
                     return
-                if (
-                    len(parts) == 4
-                    and parts[0] == "api"
-                    and parts[1] == "hub"
-                    and parts[2] == "agents"
-                ):
-                    self._hub_download(parts[3])
-                    return
                 if parts == ["api", "rules"]:
                     rules_path = ROOT / "RULES.md"
                     if not rules_path.is_file():
@@ -412,7 +402,7 @@ def make_handler(
                     if not path_log.is_file():
                         self._json(404, {"error": "game not found"})
                         return
-                    self._json(200, {"lines": _read_jsonl(path_log)})
+                    self._json(200, {"lines": [strip_hands(row) for row in _read_jsonl(path_log)]})
                     return
                 if len(parts) == 3 and parts[0] == "api" and parts[1] == "runs":
                     run_id = _safe_run(parts[2])
@@ -466,9 +456,6 @@ def make_handler(
                     return
                 if parts == ["api", "hub", "upload"]:
                     self._hub_upload(body)
-                    return
-                if parts == ["api", "hub", "download"]:
-                    self._hub_download_body(body)
                     return
             except ValueError as exc:
                 self._json(400, {"error": str(exc)})
@@ -536,7 +523,6 @@ def make_handler(
                     "agents": [
                         {
                             "name": a.name,
-                            "sha256": a.sha256,
                             "size_bytes": a.size_bytes,
                             "uploaded_at": a.uploaded_at,
                             "uploader": a.uploader,
@@ -546,28 +532,6 @@ def make_handler(
                     ]
                 },
             )
-
-        def _hub_download(self, name: str) -> None:
-            if not SAFE_HUB_NAME.fullmatch(name):
-                self._json(400, {"error": "invalid agent name"})
-                return
-            try:
-                base = self._require_hub()
-                dest = LOCAL / name / "agent.py"
-                written = download_agent(name, dest, base_url=base)
-            except ValueError as exc:
-                self._json(400, {"error": str(exc)})
-                return
-            except HubError as exc:
-                self._json(exc.status or 502, {"error": str(exc), "issues": exc.issues})
-                return
-            self._json(200, {"name": name, "path": str(written.relative_to(ROOT))})
-
-        def _hub_download_body(self, body: dict[str, Any]) -> None:
-            name = body.get("name")
-            if not isinstance(name, str) or not SAFE_HUB_NAME.fullmatch(name):
-                raise ValueError("name must match [A-Za-z0-9_-]+")
-            self._hub_download(name)
 
         def _validate_agent(self, body: dict[str, Any]) -> None:
             path = _resolve_agent_path(body)
@@ -855,28 +819,19 @@ def _agents_with_hub(hub_base: str) -> list[dict[str, str]]:
     return [*examples, *locals_, *submitted]
 
 
-def _ensure_agent(token: str, *, hub_base: str = "", refresh: bool = False) -> Path:
-    """Resolve a catalog token to a file; download hub arena agents into submissions.
+def _ensure_agent(token: str, *, hub_base: str = "") -> Path | RemoteAgentRef:
+    """Resolve a catalog token to something ``open_player`` can seat.
 
-    Cached ``agents/submissions/<name>/agent.py`` is reused unless ``refresh`` is set,
-    so starting a tournament does not re-hit the hub on every Run.
+    Arena agents play through a hub session, so nothing is written to disk.
+    Without a hub, ``arena:<name>`` only resolves to an organizer-collected copy.
     """
 
     hub_name = arena_name(token)
     if hub_name is not None:
         if not SAFE_HUB_NAME.fullmatch(hub_name):
             raise FileNotFoundError(f"no agent {token!r}")
-        dest = SUBMISSIONS / hub_name / "agent.py"
         if hub_base:
-            if not refresh and dest.is_file() and dest.stat().st_size > 0:
-                return dest
-            try:
-                return download_agent(hub_name, dest, base_url=hub_base)
-            except HubError as exc:
-                # Stale cache is better than failing mid-start when the hub blips.
-                if dest.is_file() and dest.stat().st_size > 0:
-                    return dest
-                raise FileNotFoundError(f"no arena agent {hub_name!r} on hub: {exc}") from exc
+            return RemoteAgentRef(name=hub_name, hub_base=hub_base)
         return resolve_agent(token)
 
     # Bare ids are local / examples / path only — never silently bind a hub name.
@@ -1059,6 +1014,8 @@ def _list_games(games_folder: Path) -> list[dict]:
         return []
     games = []
     for path in sorted(games_folder.glob("g*.jsonl")):
+        if is_hands_log(path):
+            continue
         try:
             rows = _read_jsonl(path)
         except json.JSONDecodeError:

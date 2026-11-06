@@ -20,7 +20,11 @@ def write_game_log(
     *,
     public_to_real: dict[str, str] | None = None,
 ) -> None:
-    """Write an organizer-facing game log.
+    """Write a game log at ``path`` and the face-down hands beside it.
+
+    ``gNNNN.jsonl`` is the public log the dashboard serves: board state without
+    ``hand``. ``gNNNN.hands.jsonl`` is the same log with every face-down hand,
+    for ``replay.py --reveal``.
 
     During a tournament the engine seats opaque public IDs. Pass
     ``public_to_real`` so the log (and dashboard) show real agent names.
@@ -70,7 +74,37 @@ def write_game_log(
         }
     )
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("".join(json.dumps(line) + "\n" for line in lines), encoding="utf-8")
+    hands_path(path).write_text(
+        "".join(json.dumps(line) + "\n" for line in lines), encoding="utf-8"
+    )
+    path.write_text(
+        "".join(json.dumps(strip_hands(line)) + "\n" for line in lines), encoding="utf-8"
+    )
+
+
+def hands_path(log_path: Path) -> Path:
+    """``g0001.jsonl`` → ``g0001.hands.jsonl``."""
+
+    return log_path.with_name(f"{log_path.stem}.hands.jsonl")
+
+
+def is_hands_log(path: Path) -> bool:
+    return path.name.endswith(".hands.jsonl")
+
+
+def strip_hands(line: dict[str, Any]) -> dict[str, Any]:
+    """Copy of one log line with face-down ``hand`` removed from its board state."""
+
+    state = line.get("state")
+    if not isinstance(state, dict):
+        return line
+    players = [
+        {key: value for key, value in player.items() if key != "hand"}
+        if isinstance(player, dict)
+        else player
+        for player in state.get("players") or []
+    ]
+    return {**line, "state": {**state, "players": players}}
 
 
 def _remap_snapshot(snapshot: dict[str, Any], public_to_real: dict[str, str]) -> dict[str, Any]:

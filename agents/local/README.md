@@ -55,12 +55,9 @@ In the dashboard, open **Play Games** → **Local** → add the agent (or **Add 
 
 Put a coup-master `.env` in the repo root first.
 
-Pull someone else’s safe submission into this folder:
-
-```bash
-python scripts/hub.py download their-name
-# writes agents/local/their-name/agent.py
-```
+Other people’s submissions show up in the dashboard under **The Arena**. You can
+seat them next to your local agents. The hub runs them and returns only their
+moves, so their files are never written to this folder.
 
 Scored upload is from `agents/submissions/<name>/` (needs the API key in `.env`):
 
