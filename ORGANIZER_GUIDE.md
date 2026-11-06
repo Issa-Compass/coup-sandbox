@@ -88,7 +88,7 @@ python scripts/serve_dashboard.py --results results --port 8765
 
 Open `http://127.0.0.1:8765`. **New session** lets you pick agents, add multiple rounds, and play them in the background. Finished games appear under Games while the session is still running — Watch any completed table without waiting for the round to finish. Or pick an existing run, switch Standings / Round tabs, open Games, then Watch. Playback supports 2s / 1s / 0.5s / 0.25s per event.
 
-Each event line in a game log includes a `state` object: public coins / influence / revealed cards. Face-down hands are written only to the `gNNNN.hands.jsonl` sibling. The dashboard never serves that file (and strips `hand` from older logs), so **Reveal** stays disabled in the browser. Use `replay.py --reveal` on the organizer machine when you need the hidden cards.
+Each event line in a game log includes a `state` object: public coins / influence / revealed cards. Face-down hands are written only to the `gNNNN.hands.jsonl` sibling. The dashboard never serves that file or any `hand` field, so **Reveal** stays disabled in the browser. Use `replay.py --reveal` on the organizer machine when you need the hidden cards.
 
 Archive the `results/<run-id>` folder when you are done. It is gitignored on purpose.
 
