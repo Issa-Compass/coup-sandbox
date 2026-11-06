@@ -2,18 +2,28 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
+import sys
 from pathlib import Path
 
 from coup.agent_api import Agent
 
 
 def load_agent_class(path: Path) -> type[Agent]:
-    spec = importlib.util.spec_from_file_location(f"candidate_{path.stem}", path)
+    digest = hashlib.sha1(str(path.resolve()).encode()).hexdigest()[:10]
+    module_name = f"candidate_{path.stem}_{digest}"
+    spec = importlib.util.spec_from_file_location(module_name, path)
     if spec is None or spec.loader is None:
         raise ImportError(f"cannot load {path}")
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    # dataclasses and typing resolve a class's module through sys.modules.
+    sys.modules[module_name] = module
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        sys.modules.pop(module_name, None)
+        raise
     classes = [
         obj
         for obj in vars(module).values()
