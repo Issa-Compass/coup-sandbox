@@ -208,6 +208,42 @@ def test_load_finds_only_the_subclass_defined_in_the_file():
     assert cls.__name__ == "ChallengerBot"
 
 
+DATACLASS_AGENT = (
+    "from __future__ import annotations\n"
+    "from dataclasses import dataclass, field\n"
+    "from coup.agent_api import Agent, default_action\n"
+    "@dataclass\n"
+    "class Memory:\n"
+    "    seen: list[int] = field(default_factory=list)\n"
+    "class Remembers(Agent):\n"
+    "    def __init__(self) -> None:\n"
+    "        self.memory = Memory()\n"
+    "    def choose_action(self, view):\n"
+    "        self.memory.seen.append(view.turn)\n"
+    "        return default_action(view)\n"
+)
+
+
+def test_agents_with_dataclasses_load_in_process_and_in_sandbox(tmp_path):
+    first = tmp_path / "a" / "agent.py"
+    second = tmp_path / "b" / "agent.py"
+    for path in (first, second):
+        path.parent.mkdir()
+        path.write_text(DATACLASS_AGENT, encoding="utf-8")
+    assert load_agent_class(first).__name__ == "Remembers"
+    assert load_agent_class(first) is not load_agent_class(second)
+
+    sandboxed = SandboxPlayer(first, "remembers", timeout=2)
+    other = open_player(EXAMPLES["template"], "template", sandbox=False, timeout=1)
+    try:
+        played = play_game([sandboxed, other], seed=2)
+    finally:
+        sandboxed.close()
+        other.close()
+    assert sandboxed.load_error is None
+    assert played.penalties["remembers"]["errors"] == 0
+
+
 def test_branch_names_and_ci_path_filter():
     assert safe_branch_name("origin/agent/ada-lovelace") == "ada-lovelace"
     assert safe_branch_name("origin/main") is None
