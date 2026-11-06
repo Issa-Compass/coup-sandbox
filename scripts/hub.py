@@ -111,9 +111,10 @@ def main() -> None:
             stored["full_name"] = meta.full_name or args.full_name
             save_player_file(stored)
             who = f" by {meta.full_name}" if meta.full_name else ""
+            sha = f"{meta.sha256[:12]}…" if meta.sha256 else "n/a"
             print(
                 f"uploaded {meta.name}{who} player_uid={uid} status={meta.status} "
-                f"sha256={meta.sha256[:12]}… size={meta.size_bytes}"
+                f"sha256={sha} size={meta.size_bytes}"
             )
             return
 
